@@ -5,17 +5,16 @@ import os
 import logging
 import pickle
 
-# --- Configuration ---
 NUM_USERS = 10_000_000
 # Ajusta estas rutas a tu ubicación real
 LOCATION_TXT_FILE = './dataset/10_million_location.txt'
 USER_TXT_FILE = './dataset/10_million_user.txt'
 OUTPUT_DIR = './processed_data' # Directorio para guardar salida
-# Cambiamos los nombres de archivo para reflejar el contenido
+
 GRAPH_IGRAPH_FILE = os.path.join(OUTPUT_DIR, "social_network_graph_10M.igraph.pkl")
 LOCATIONS_PKL_FILE = os.path.join(OUTPUT_DIR, "social_network_locations_10M.pkl")
 IDX2ID_PKL_FILE = os.path.join(OUTPUT_DIR, "social_network_idx2id_10M.pkl")
-ID2IDX_PKL_FILE = os.path.join(OUTPUT_DIR, "social_network_id2idx_10M.pkl") # Guardar ambos puede ser útil
+ID2IDX_PKL_FILE = os.path.join(OUTPUT_DIR, "social_network_id2idx_10M.pkl") 
 LOG_FILE = "graph_builder.log"
 
 # --- Logging Setup ---
@@ -32,13 +31,12 @@ os.makedirs(OUTPUT_DIR, exist_ok=True)
 def load_locations_numpy(filepath, num_users):
     """
     Loads user locations efficiently using numpy.
-    Assumes line 'i' corresponds to user ID 'i'.
     """
     logging.info(f"Iniciando carga de ubicaciones desde {filepath} para {num_users} usuarios.")
     start = time.time()
     locations = None
     try:
-        # Pre-allocate numpy array for efficiency
+        # Guardando espacios para mejorar la efeciencia del array numpy
         locations = np.zeros((num_users, 2), dtype=np.float32)
         count = 0
         with open(filepath, 'r') as f:
@@ -54,11 +52,10 @@ def load_locations_numpy(filepath, num_users):
                         count += 1
                     else:
                         logging.warning(f"Coordenadas inválidas en línea {i+1}: {lat}, {lon}. Usando [0, 0].")
-                        locations[i] = [0.0, 0.0] # Default or handle as needed
-
+                        locations[i] = [0.0, 0.0] 
                 except ValueError:
                     logging.error(f"Error al parsear la línea {i+1}: '{line.strip()}'. Usando [0, 0].")
-                    locations[i] = [0.0, 0.0] # Default or handle as needed
+                    locations[i] = [0.0, 0.0] 
                 except Exception as e:
                      logging.error(f"Error inesperado procesando línea {i+1}: {e}")
                      locations[i] = [0.0, 0.0]
@@ -81,7 +78,7 @@ def load_locations_numpy(filepath, num_users):
 
 def build_graph_igraph_memory_optimized(user_filepath):
     """
-    Builds the graph using igraph efficiently, avoiding large intermediate edge lists.
+    Se opto por construir el grafo usando igraph de manera eficiente, evitando listas de aristas intermedias grandes.
     """
     logging.info(f"Iniciando construcción optimizada de grafo desde {user_filepath}.")
     start_mapping = time.time()
@@ -122,7 +119,7 @@ def build_graph_igraph_memory_optimized(user_filepath):
         # --- Crear Mapeos ---
         sorted_user_ids = sorted(list(user_ids))
         id2idx = {uid: idx for idx, uid in enumerate(sorted_user_ids)}
-        idx2id = {idx: uid for uid, idx in id2idx.items()} # Mapeo inverso
+        idx2id = {idx: uid for uid, idx in id2idx.items()}
         num_unique_nodes = len(id2idx)
         logging.info(f"Mapeados {num_unique_nodes} IDs únicos a índices (0 a {num_unique_nodes-1}).")
         logging.info(f"ID original máximo encontrado: {max_original_id_seen}") # Útil para debug
@@ -148,9 +145,8 @@ def build_graph_igraph_memory_optimized(user_filepath):
             for i, line in enumerate(f):
                 try:
                     ids_str = line.strip().split(',')
-                    if not ids_str or len(ids_str) < 2: continue # Necesita al menos src y un dst
-
-                    # Convertir a int, manejar errores individuales
+                    if not ids_str or len(ids_str) < 2: continue 
+                    
                     ids_int = []
                     valid_line = True
                     for id_s in ids_str:
@@ -158,9 +154,8 @@ def build_graph_igraph_memory_optimized(user_filepath):
                             ids_int.append(int(id_s))
                         except ValueError:
                             logging.warning(f"ID inválido '{id_s}' en línea {i+1}. Ignorando ID.")
-                            valid_line = False # O podríamos ignorar solo el ID
-                            break # Ignorar toda la línea si un ID es malo? Decisión de diseño.
-
+                            valid_line = False 
+                            break 
                     if not valid_line or len(ids_int) < 2: continue
 
                     src_orig = ids_int[0]
@@ -203,7 +198,6 @@ def build_graph_igraph_memory_optimized(user_filepath):
         return g, id2idx, idx2id
 
     except MemoryError:
-        # Todavía podría ocurrir si la estructura interna de igraph requiere mucha RAM
         logging.error("Error Crítico: Memoria insuficiente durante la construcción final del grafo igraph.")
         return None, None, None
     except Exception as e:
@@ -220,7 +214,6 @@ def perform_basic_analysis(g, idx2id):
     start = time.time()
 
     try:
-        # Número de Nodos y Aristas (ya loggeado antes, pero bueno tenerlo aquí)
         num_nodes = g.vcount()
         num_edges = g.ecount()
         logging.info(f"Análisis - Nodos: {num_nodes}, Aristas: {num_edges}")
@@ -264,11 +257,6 @@ def perform_basic_analysis(g, idx2id):
         else:
             logging.warning("No se pudieron calcular los grados de salida.")
 
-        # Usuarios que no siguen a nadie (grado de salida 0)
-        zero_outdegree_indices = [i for i, degree in enumerate(outdegrees) if degree == 0]
-        users_no_follows = [idx2id[idx] for idx in zero_outdegree_indices]
-        logging.info(f"Análisis - Usuarios que no siguen a nadie ({len(users_no_follows)}): {users_no_follows[:10]}...") # Mostrar solo los primeros
-
         # Usuarios que no son seguidos por nadie (grado de entrada 0)
         zero_indegree_indices = [i for i, degree in enumerate(indegrees) if degree == 0]
         users_no_followed = [idx2id[idx] for idx in zero_indegree_indices]
@@ -291,21 +279,16 @@ def perform_basic_analysis(g, idx2id):
 
 def save_processed_data(g_igraph, id2idx, idx2id, locations_np,
                        graph_filepath, id2idx_filepath, idx2id_filepath, loc_filepath):
-    """
-    Saves the essential processed data: igraph graph, mappings, and locations.
-    """
+    
     success_flags = {'graph': False, 'id2idx': False, 'idx2id': False, 'locations': False}
 
-    # 1. Save igraph graph
     if g_igraph is not None:
         logging.info(f"Guardando grafo igraph en {graph_filepath}...")
         start_save_g = time.time()
         try:
-            # Usar el método nativo de igraph o pickle
+            
             g_igraph.write_pickle(graph_filepath)
-            # Alternativa:
-            # with open(graph_filepath, 'wb') as f:
-            #    pickle.dump(g_igraph, f, protocol=pickle.HIGHEST_PROTOCOL)
+            
             elapsed_save_g = time.time() - start_save_g
             logging.info(f"Grafo igraph guardado en {elapsed_save_g:.2f} segundos.")
             success_flags['graph'] = True
@@ -314,7 +297,6 @@ def save_processed_data(g_igraph, id2idx, idx2id, locations_np,
     else:
         logging.error("Grafo igraph no disponible para guardar.")
 
-    # 2. Save id2idx mapping
     if id2idx:
         logging.info(f"Guardando mapeo id->idx en {id2idx_filepath}...")
         start_save_map1 = time.time()
@@ -329,7 +311,6 @@ def save_processed_data(g_igraph, id2idx, idx2id, locations_np,
     else:
          logging.warning("Mapeo id->idx no disponible para guardar.")
 
-    # 3. Save idx2id mapping
     if idx2id:
         logging.info(f"Guardando mapeo idx->id en {idx2id_filepath}...")
         start_save_map2 = time.time()
@@ -345,22 +326,17 @@ def save_processed_data(g_igraph, id2idx, idx2id, locations_np,
         logging.warning("Mapeo idx->id no disponible para guardar.")
 
 
-    # 4. Prepare and save locations dictionary (keyed by ORIGINAL ID)
     if locations_np is not None:
         logging.info(f"Preparando y guardando diccionario de ubicaciones en {loc_filepath}...")
         start_save_loc = time.time()
         locations_dict = {}
         valid_locations_count = 0
-        # Asumimos que locations_np[i] es para el usuario con ID original i
-        # Solo guardamos locaciones para los IDs que están en nuestro mapeo (y por ende en el grafo)
         nodes_in_graph_orig_ids = set(id2idx.keys()) # Obtener IDs originales del mapeo
         try:
             # Iterar hasta el máximo índice esperado O el tamaño del array numpy
             max_possible_id = len(locations_np)
             processed_ids = 0
             for user_id in range(max_possible_id):
-                 # Optimización: Si ya procesamos todos los nodos del grafo, parar.
-                 # if processed_ids >= len(nodes_in_graph_orig_ids): break
 
                  if user_id in nodes_in_graph_orig_ids:
                      loc_tuple = tuple(locations_np[user_id])
@@ -387,7 +363,7 @@ def save_processed_data(g_igraph, id2idx, idx2id, locations_np,
             logging.error(f"Error al guardar las ubicaciones: {e}", exc_info=True)
     else:
         logging.warning("No hay datos de ubicación para guardar.")
-        success_flags['locations'] = True # Considerar éxito si no había nada que guardar
+        success_flags['locations'] = True
 
     # Retornar True si al menos el grafo y los mapeos se guardaron
     return success_flags['graph'] and success_flags['id2idx'] and success_flags['idx2id']
@@ -398,18 +374,17 @@ if __name__ == "__main__":
     logging.info("--- Iniciando Script de Construcción de Grafo (Optimizado para Memoria) ---")
 
     # 1. Cargar Ubicaciones
-    locations_data = load_locations_numpy(LOCATION_TXT_FILE, NUM_USERS) # Se asume NUM_USERS es correcto
+    locations_data = load_locations_numpy(LOCATION_TXT_FILE, NUM_USERS) 
     # Si locations_data es None, se manejará en la función de guardado
 
     # 2. Construir Grafo (igraph) - Versión Optimizada
-    # Ya no necesita NUM_USERS_HINT
     graph_igraph, id_to_idx, idx_to_id = build_graph_igraph_memory_optimized(USER_TXT_FILE)
 
     if graph_igraph is None:
         logging.critical("No se pudo construir el grafo igraph. Terminando.")
         exit()
 
-    # 3. Análisis Básico (igraph) - Sin cambios, opera sobre igraph
+    # 3. Análisis Básico (igraph
     perform_basic_analysis(graph_igraph, idx_to_id)
 
     # 4. Guardar Datos Procesados (igraph, mapeos, ubicaciones)
