@@ -1,11 +1,11 @@
-# --- Imports necesarios ---
 import networkx as nx
-import igraph as ig # Importar igraph
+import igraph as ig
 import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.cm as cm
 import plotly.graph_objects as go
 import plotly.express as px
+from plotly.subplots import make_subplots
 import pandas as pd
 from tqdm import tqdm
 import time
@@ -14,12 +14,10 @@ import random
 from collections import Counter
 import pickle
 import logging
-import community as community_louvai
+import community as community_louvain
 import leidenalg
 
-# --- Configuration ---
 PROCESS_DIR = './processed_data'
-# Nombres de archivo actualizados según los guardados por el builder optimizado
 GRAPH_FILE = os.path.join(PROCESS_DIR, "social_network_graph_10M.igraph.pkl") # Archivo igraph
 LOCATIONS_FILE = os.path.join(PROCESS_DIR, "social_network_locations_10M.pkl")
 IDX2ID_FILE = os.path.join(PROCESS_DIR, "social_network_idx2id_10M.pkl") # Necesario para nombres
@@ -29,9 +27,9 @@ LOG_FILE = "graph_visualizer.log"
 
 # Visualization Limits (Ajustados ligeramente)
 MAX_NODES_BASIC_VIZ = 300
-MAX_NODES_COMMUNITY_VIZ = 2000 # Leiden puede manejar más que Louvain/NX
-MAX_NODES_INTERACTIVE_VIZ = 3000 # Permitir un poco más para Plotly
-MAX_NODES_GEO_VIZ = 150_000     # Aumentar un poco para el mapa
+MAX_NODES_COMMUNITY_VIZ = 1000 # Leiden puede manejar más que Louvain/NX
+MAX_NODES_INTERACTIVE_VIZ = 1500 # Permitir un poco más para Plotly
+MAX_NODES_GEO_VIZ = 15_000     # Aumentar un poco para el mapa
 
 # --- Logging Setup ---
 logging.basicConfig(level=logging.INFO,
@@ -43,14 +41,12 @@ logging.basicConfig(level=logging.INFO,
 os.makedirs(OUTPUT_VIZ_DIR, exist_ok=True)
 
 # --- Funciones ---
-
 def load_processed_data(graph_path, id2idx_path, idx2id_path, locations_path):
     """Carga el grafo igraph, mapeos, y diccionario de ubicaciones."""
     g_igraph = None
     id2idx = None
     idx2id = None
     locations = None
-
     # Load igraph Graph
     logging.info(f"Cargando grafo igraph desde {graph_path}...")
     start_time = time.time()
@@ -282,7 +278,6 @@ def calculate_centralities(g_igraph, idx2id, measure='pagerank'):
     except Exception as e:
         logging.error(f"Error calculando centralidad '{measure}': {e}", exc_info=True)
         return None
-
 
 # --- Funciones de Visualización (Adaptadas y Mejoradas) ---
 
@@ -804,7 +799,382 @@ def geo_visualization(g_igraph, id2idx, idx2id, locations,
         except Exception as e: logging.error(f"Error al guardar viz geo: {e}")
     return fig
 
+def visualize_graph_relationships(g_igraph, id2idx, idx2id, max_nodes=1000, save_path=None):
+    """
+    Crea una visualización interactiva 3D de las relaciones del grafo con flechas direccionales.
+    
+    Args:
+        g_igraph: Grafo de igraph
+        id2idx: Diccionario de mapeo ID -> índice
+        idx2id: Diccionario de mapeo índice -> ID
+        max_nodes: Número máximo de nodos a visualizar
+        save_path: Ruta donde guardar el HTML resultante
+    
+    Returns:
+        figura de Plotly
+    """
+    import plotly.graph_objects as go
+    import networkx as nx
+    import numpy as np
+    from tqdm import tqdm
+    import random
+    import os
+    
+    # Verificar datos de entrada
+    if g_igraph is None or not id2idx or not idx2id:
+        logging.error("Datos de grafo o mapeos no disponibles")
+        return None
+    
+    try:
+        # Seleccionar nodos aleatoriamente
+        available_ids = list(id2idx.keys())
+        if len(available_ids) > max_nodes:
+            selected_ids = random.sample(available_ids, max_nodes)
+        else:
+            selected_ids = available_ids
+        
+        # Crear subgrafo NetworkX
+        subG_nx = nx.DiGraph()
+        subG_nx.add_nodes_from(selected_ids)
+        
+        # Añadir aristas verificando conexiones válidas
+        for orig_id in tqdm(selected_ids, desc="Procesando conexiones"):
+            idx = id2idx[orig_id]
+            neighbors = g_igraph.neighbors(idx, mode='out')
+            for neighbor_idx in neighbors:
+                if neighbor_idx in idx2id:
+                    neighbor_id = idx2id[neighbor_idx]
+                    if neighbor_id in subG_nx:
+                        subG_nx.add_edge(orig_id, neighbor_id)
+        
+        # Información de diagnóstico
+        logging.info(f"""
+        Diagnóstico del subgrafo:
+        - Nodos: {subG_nx.number_of_nodes()}
+        - Aristas: {subG_nx.number_of_edges()}
+        - Densidad: {nx.density(subG_nx):.4f}
+        - Nodos aislados: {len(list(nx.isolates(subG_nx)))}
+        """)
+        
+        # Calcular layout 3D
+        logging.info("Calculando layout 3D...")
+        pos_3d = nx.spring_layout(subG_nx, dim=3, k=1/np.sqrt(subG_nx.number_of_nodes()))
+        
+        # Crear trazas para aristas con flechas
+        edge_traces = []
+        for edge in subG_nx.edges():
+            x0, y0, z0 = pos_3d[edge[0]]
+            x1, y1, z1 = pos_3d[edge[1]]
+            
+            # Línea principal de la conexión
+            edge_trace = go.Scatter3d(
+                x=[x0, x1],
+                y=[y0, y1],
+                z=[z0, z1],
+                mode='lines',
+                line=dict(
+                    color='rgba(200,200,200,0.5)',
+                    width=1
+                ),
+                hoverinfo='none'
+            )
+            
+            # Calcular punto para la flecha (80% del camino)
+            arrow_x = x0 + 0.8*(x1-x0)
+            arrow_y = y0 + 0.8*(y1-y0)
+            arrow_z = z0 + 0.8*(z1-z0)
+            
+            # Punta de la flecha
+            arrow_trace = go.Scatter3d(
+                x=[arrow_x, x1],
+                y=[arrow_y, y1],
+                z=[arrow_z, z1],
+                mode='lines',
+                line=dict(
+                    color='rgba(200,50,50,0.8)',
+                    width=2
+                ),
+                hoverinfo='none'
+            )
+            
+            edge_traces.extend([edge_trace, arrow_trace])
+        
+        # Preparar datos para los nodos
+        node_x, node_y, node_z = [], [], []
+        node_text = []
+        node_size = []
+        node_colors = []
+        
+        # Calcular grados
+        in_degrees = dict(subG_nx.in_degree())
+        out_degrees = dict(subG_nx.out_degree())
+        
+        for node in subG_nx.nodes():
+            x, y, z = pos_3d[node]
+            node_x.append(x)
+            node_y.append(y)
+            node_z.append(z)
+            
+            in_degree = in_degrees[node]
+            out_degree = out_degrees[node]
+            idx = id2idx[node]
+            
+            node_size.append(5 + 2*np.log1p(in_degree + out_degree))
+            node_colors.append(in_degree)
+            node_text.append(
+                f'ID: {node}<br>'
+                f'Índice: {idx}<br>'
+                f'Conexiones entrantes: {in_degree}<br>'
+                f'Conexiones salientes: {out_degree}'
+            )
+        
+        # Crear traza de nodos
+        node_trace = go.Scatter3d(
+            x=node_x, y=node_y, z=node_z,
+            mode='markers',
+            marker=dict(
+                size=node_size,
+                color=node_colors,
+                colorscale='Viridis',
+                colorbar=dict(title='Conexiones Entrantes'),
+                opacity=0.8
+            ),
+            text=node_text,
+            hoverinfo='text'
+        )
+        
+        # Crear figura final
+        fig = go.Figure(data=[*edge_traces, node_trace])
+        
+        # Configurar layout
+        fig.update_layout(
+            title=dict(
+                text=f'Red Social - {subG_nx.number_of_nodes()} usuarios',
+                x=0.5,
+                y=0.95
+            ),
+            showlegend=False,
+            scene=dict(
+                xaxis=dict(showgrid=False, zeroline=False, showticklabels=False),
+                yaxis=dict(showgrid=False, zeroline=False, showticklabels=False),
+                zaxis=dict(showgrid=False, zeroline=False, showticklabels=False),
+                bgcolor='rgba(255,255,255,0.9)'
+            ),
+            margin=dict(l=0, r=0, t=40, b=0),
+            paper_bgcolor='white'
+        )
+        
+        # Guardar visualización
+        if save_path:
+            try:
+                os.makedirs(os.path.dirname(save_path), exist_ok=True)
+                fig.write_html(save_path)
+                logging.info(f"Visualización guardada en {save_path}")
+            except Exception as e:
+                logging.error(f"Error guardando visualización: {e}")
+        
+        return fig
+        
+    except Exception as e:
+        logging.error(f"Error durante la creación de la visualización: {str(e)}")
+        return None
 
+def visualize_graph_2d(g_igraph, id2idx, idx2id, max_nodes=1000, save_path=None):
+    """
+    Crea una visualización 2D del grafo con flechas direccionales.
+    
+    Args:
+        g_igraph: Grafo de igraph
+        id2idx: Diccionario de mapeo ID -> índice
+        idx2id: Diccionario de mapeo índice -> ID
+        max_nodes: Número máximo de nodos a visualizar
+        save_path: Ruta donde guardar la imagen
+    """
+    import networkx as nx
+    import matplotlib.pyplot as plt
+    import random
+    import numpy as np
+    from tqdm import tqdm
+    
+    logging.info(f"Creando visualización 2D con máximo {max_nodes} nodos...")
+    
+    try:
+        # Seleccionar nodos aleatoriamente
+        available_ids = list(id2idx.keys())
+        if len(available_ids) > max_nodes:
+            selected_ids = random.sample(available_ids, max_nodes)
+        else:
+            selected_ids = available_ids
+            
+        # Crear subgrafo NetworkX
+        G = nx.DiGraph()
+        G.add_nodes_from(selected_ids)
+        
+        # Añadir aristas
+        for orig_id in tqdm(selected_ids, desc="Procesando conexiones"):
+            idx = id2idx[orig_id]
+            neighbors = g_igraph.neighbors(idx, mode='out')
+            for neighbor_idx in neighbors:
+                if neighbor_idx in idx2id:
+                    neighbor_id = idx2id[neighbor_idx]
+                    if neighbor_id in G:
+                        G.add_edge(orig_id, neighbor_id)
+        
+        logging.info(f"Subgrafo creado con {G.number_of_nodes()} nodos y {G.number_of_edges()} aristas")
+        
+        # Crear figura con subplots para manejar la colorbar
+        fig, ax = plt.subplots(figsize=(20, 20))
+        
+        # Calcular layout
+        pos = nx.spring_layout(G, k=1/np.sqrt(G.number_of_nodes()), iterations=50)
+        
+        # Calcular grados para tamaños y colores
+        node_degrees = [G.in_degree(node) for node in G.nodes()]
+        node_sizes = [300 + 100 * np.log1p(deg) for deg in node_degrees]
+        
+        # Dibujar nodos
+        nodes = nx.draw_networkx_nodes(G, pos, 
+                                     node_size=node_sizes,
+                                     node_color=node_degrees,
+                                     cmap=plt.cm.viridis,
+                                     alpha=0.7,
+                                     ax=ax)
+        
+        # Dibujar aristas con flechas
+        nx.draw_networkx_edges(G, pos,
+                             edge_color='gray',
+                             alpha=0.5,
+                             arrows=True,
+                             arrowsize=20,
+                             width=0.5,
+                             connectionstyle='arc3,rad=0.2',
+                             ax=ax)
+        
+        # Añadir etiquetas para nodos con mayor grado
+        labels = {}
+        for node in G.nodes():
+            if G.in_degree(node) > np.percentile(node_degrees, 75):
+                labels[node] = str(node)
+        nx.draw_networkx_labels(G, pos, labels, font_size=8, ax=ax)
+        
+        # Configurar título y ejes
+        ax.set_title(f'Red Social - {G.number_of_nodes()} usuarios\nFlechas indican "sigue a"')
+        ax.set_axis_off()
+        
+        # Añadir colorbar correctamente
+        plt.colorbar(nodes, ax=ax, label='Número de seguidores')
+        
+        # Ajustar layout
+        plt.tight_layout()
+        
+        # Guardar o mostrar
+        if save_path:
+            # Asegurar que el directorio existe
+            os.makedirs(os.path.dirname(save_path), exist_ok=True)
+            plt.savefig(save_path, bbox_inches='tight', dpi=300)
+            logging.info(f"Visualización guardada en {save_path}")
+        else:
+            plt.show()
+            
+        plt.close()
+        
+        return G
+        
+    except Exception as e:
+        logging.error(f"Error durante la creación de la visualización 2D: {str(e)}")
+        return None
+
+def detect_communities_girvan_newman(g_igraph, id2idx, idx2id, max_communities=10, save_path=None):
+    """
+    Detecta comunidades usando el algoritmo de comunidades multinivel.
+    Convierte el grafo a no dirigido antes del análisis.
+    
+    Args:
+        g_igraph: Grafo de igraph
+        id2idx: Diccionario de mapeo ID -> índice
+        idx2id: Diccionario de mapeo índice -> ID
+        max_communities: Número máximo de comunidades a detectar
+        save_path: Ruta para guardar la visualización
+    """
+    import igraph as ig
+    import matplotlib.pyplot as plt
+    import matplotlib.colors as mcolors
+    import numpy as np
+    
+    logging.info("Iniciando detección de comunidades...")
+    
+    try:
+        # Crear subgrafo más pequeño para el análisis
+        if g_igraph.vcount() > 1000:
+            logging.info("Grafo muy grande, creando subgrafo para análisis...")
+            selected_vertices = np.random.choice(g_igraph.vcount(), 1000, replace=False)
+            subgraph = g_igraph.subgraph(selected_vertices)
+        else:
+            subgraph = g_igraph
+        
+        # Convertir a no dirigido
+        logging.info("Convirtiendo grafo a no dirigido...")
+        undirected_graph = subgraph.as_undirected(mode="collapse", combine_edges="sum")
+            
+        # Detectar comunidades
+        logging.info("Detectando comunidades...")
+        communities = undirected_graph.community_multilevel()
+        
+        # Obtener modularidad
+        modularity = communities.modularity
+        
+        logging.info(f"Se encontraron {len(communities)} comunidades")
+        logging.info(f"Modularidad: {modularity:.4f}")
+        
+        # Visualizar si se especifica una ruta
+        if save_path:
+            plt.figure(figsize=(15, 15))
+            
+            # Calcular layout
+            layout = undirected_graph.layout_fruchterman_reingold(niter=100)
+            
+            # Colores para las comunidades
+            colors = list(mcolors.TABLEAU_COLORS.values())
+            
+            # Dibujar nodos
+            for idx, community in enumerate(communities):
+                color = colors[idx % len(colors)]
+                xs = [layout[vertex][0] for vertex in community]
+                ys = [layout[vertex][1] for vertex in community]
+                plt.scatter(xs, ys, c=color, label=f'Comunidad {idx+1} ({len(community)} nodos)', alpha=0.6)
+            
+            # Dibujar aristas
+            edge_xs = []
+            edge_ys = []
+            for edge in undirected_graph.es:
+                source, target = edge.tuple
+                edge_xs.extend([layout[source][0], layout[target][0], None])
+                edge_ys.extend([layout[source][1], layout[target][1], None])
+            plt.plot(edge_xs, edge_ys, 'gray', alpha=0.2, linewidth=0.5)
+            
+            plt.title(f'Comunidades Detectadas\n{len(communities)} comunidades, Modularidad: {modularity:.4f}')
+            plt.legend(bbox_to_anchor=(1.05, 1), loc='upper left', fontsize=8)
+            plt.axis('off')
+            
+            # Guardar visualización
+            plt.tight_layout()
+            os.makedirs(os.path.dirname(save_path), exist_ok=True)
+            plt.savefig(save_path, bbox_inches='tight', dpi=300)
+            plt.close()
+            logging.info(f"Visualización guardada en {save_path}")
+        
+        # Convertir IDs de vértices a IDs originales
+        communities_with_original_ids = []
+        for community in communities:
+            original_ids = [idx2id[subgraph.vs[vertex].index] for vertex in community]
+            communities_with_original_ids.append(original_ids)
+        
+        return communities_with_original_ids, modularity
+        
+    except Exception as e:
+        logging.error(f"Error durante la detección de comunidades: {str(e)}")
+        return None, None
+    
 # --- Main Execution (Visualizer) ---
 if __name__ == "__main__":
     logging.info("--- Iniciando Script de Visualización de Grafo (Optimizado y Mejorado) ---")
@@ -817,7 +1187,7 @@ if __name__ == "__main__":
     if g_igraph_main is None or id2idx_main is None or idx2id_main is None:
         logging.critical("No se pudieron cargar los datos esenciales del grafo. Terminando.")
         exit()
-
+    
     # 2. Calcular Centralidades (hacerlo una vez)
     logging.info("\n--- Calculando Métricas Globales ---")
     pagerank_map = calculate_centralities(g_igraph_main, idx2id_main, measure='pagerank')
@@ -825,21 +1195,20 @@ if __name__ == "__main__":
     # betweenness_map = calculate_centralities(g_igraph_main, idx2id_main, measure='betweenness')
     eigenvector_map = calculate_centralities(g_igraph_main, idx2id_main, measure='eigenvector')
 
-
     # --- Ejecutar Visualizaciones ---
-
+    
     # 3.1. Viz básica (subgrafo estático)
     logging.info("\n--- 3.1 Iniciando Visualización Básica ---")
     basic_graph_visualization(g_igraph_main, idx2id_main,
                               save_path="viz_basic_subgraph.png",
                               max_nodes=MAX_NODES_BASIC_VIZ)
-
+    
     # 3.2. Comunidades (detección y viz estática)
     logging.info("\n--- 3.2 Iniciando Detección y Visualización de Comunidades ---")
     partition_main = community_visualization(g_igraph_main, id2idx_main, idx2id_main,
                                             save_path="viz_communities_subgraph.png",
                                             max_nodes=MAX_NODES_COMMUNITY_VIZ)
-
+    
     # 3.3. Distribución de grados (global, log-log)
     logging.info("\n--- 3.3 Iniciando Visualización Distribución de Grados ---")
     degree_distribution_visualization(g_igraph_main,
@@ -886,6 +1255,47 @@ if __name__ == "__main__":
                           max_nodes=MAX_NODES_GEO_VIZ)
     else:
         logging.warning("Saltando viz geo (Seguidores): no se cargaron ubicaciones.")
+    # Crear subgrafo NetworkX para las visualizaciones interactivas
+    logging.info("\n--- Creando subgrafo NetworkX para visualizaciones interactivas ---")
+    subG_nx, _ = create_sampled_networkx_subgraph(
+        g_igraph_main, 
+        idx2id_main, 
+        MAX_NODES_INTERACTIVE_VIZ, 
+        sampling_method='random'
+    )
+    
+    fig = visualize_graph_relationships(
+        g_igraph_main,
+        id2idx_main,
+        idx2id_main,
+        max_nodes=1000,
+        save_path="visualizations/graph_relationships.html"
+    )
+    
+    # Ejemplo de uso
+    G = visualize_graph_2d(
+        g_igraph_main,
+        id2idx_main,
+        idx2id_main,
+        max_nodes=1000,
+        save_path="visualizations/network_2d.png"
+    )
+    
+    # Ejemplo de uso
+    communities, modularity = detect_communities_girvan_newman(
+        g_igraph_main,
+        id2idx_main,
+        idx2id_main,
+        max_communities=10,
+        save_path="visualizations/communities_detected.png"
+    )
 
-
+    # Mostrar resultados
+    if communities and modularity:
+        print(f"\nNúmero de comunidades encontradas: {len(communities)}")
+        print(f"Modularidad: {modularity:.4f}")
+        
+        for i, community in enumerate(communities, 1):
+            print(f"Comunidad {i}: {len(community)} nodos")
+    
     logging.info("\n--- Script de Visualización Completado ---")

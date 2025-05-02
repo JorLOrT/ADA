@@ -8,8 +8,8 @@ import pickle
 # --- Configuration ---
 NUM_USERS = 10_000_000
 # Ajusta estas rutas a tu ubicación real
-LOCATION_TXT_FILE = 'D:/uSalle/Software/dataset/10_million_location.txt'
-USER_TXT_FILE = 'D:/uSalle/Software/dataset/10_million_user.txt'
+LOCATION_TXT_FILE = './dataset/10_million_location.txt'
+USER_TXT_FILE = './dataset/10_million_user.txt'
 OUTPUT_DIR = './processed_data' # Directorio para guardar salida
 # Cambiamos los nombres de archivo para reflejar el contenido
 GRAPH_IGRAPH_FILE = os.path.join(OUTPUT_DIR, "social_network_graph_10M.igraph.pkl")
@@ -288,7 +288,6 @@ def perform_basic_analysis(g, idx2id):
 
     except Exception as e:
         logging.error(f"Error durante el análisis básico del grafo: {e}", exc_info=True)
-
 
 def save_processed_data(g_igraph, id2idx, idx2id, locations_np,
                        graph_filepath, id2idx_filepath, idx2id_filepath, loc_filepath):
