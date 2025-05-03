@@ -126,13 +126,50 @@ Análisis - Usuario que sigue a más personas: ID 2938471 (4,291 seguidos)
 Análisis - Componentes conectados (débil): 423
 Análisis - Tamaño del componente conectado más grande: 8,701,523 nodos (99.52%)
 ```
+## Imágenes
 
-## 🔄 Extensiones Futuras
+### Distribución de Grados
+![Distribución de Grados](visualizations/viz_degree_distribution.png)
 
-- Análisis de comunidades
-- Cálculo de medidas de centralidad (betweenness, closeness)
-- Visualización de la red y geolocalización
-- Paralelización de la carga y procesamiento
+Esta visualización muestra dos gráficas en escala logarítmica (Log-Log):
+- **Gráfica Izquierda (Grado de Entrada)**: Muestra la distribución de seguidores, donde se observa que pocos usuarios tienen muchos seguidores (influencers) y la mayoría tiene pocos seguidores
+- **Gráfica Derecha (Grado de Salida)**: Representa cuántos usuarios siguen a otros, mostrando que la mayoría sigue a un número moderado de personas
+
+### Red en 2D
+![Red en 2D](visualizations/network_2d.png)
+
+Representa la estructura de la red social en un espacio bidimensional donde:
+- Cada punto representa un usuario
+- Las líneas representan conexiones de seguimiento
+- Los colores indican diferentes comunidades detectadas
+- El tamaño de los nodos indica su importancia en la red
+
+### Visualización Geográfica de Seguidores
+![Visualización Geográfica de Seguidores](visualizations/viz_geographic_followers.png)
+
+Mapa de calor global que muestra:
+- Distribución geográfica de los usuarios
+- Intensidad del color indica mayor concentración de usuarios
+- Permite identificar regiones con mayor actividad en la red
+- Patrones de distribución geográfica de la red social
+
+### Visualización Geográfica por PageRank
+![Visualización Geográfica por PageRank](visualizations/viz_geographic_pagerank.png)
+
+Mapa que combina ubicación y relevancia donde:
+- El tamaño de los puntos representa el PageRank del usuario
+- Los colores indican el nivel de influencia
+- Permite identificar zonas geográficas con usuarios más influyentes
+- Muestra la distribución global de la influencia en la red
+
+### Relaciones del Grafo
+![Relaciones del Grafo](visualizations/graph_relationships.png)
+
+Visualización detallada de las conexiones que muestra:
+- Patrones de interacción entre usuarios
+- Estructura de comunidades y grupos
+- Densidad de conexiones en diferentes partes de la red
+- Clustering y formación de subgrupos
 
 ## 📜 Licencia
 
