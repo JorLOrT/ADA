@@ -37,7 +37,6 @@ logging.basicConfig(level=logging.INFO,
                     handlers=[logging.FileHandler(LOG_FILE, mode='w'), # Sobrescribir log en cada ejecución
                               logging.StreamHandler()])
 
-# --- Ensure Output Directory Exists ---
 os.makedirs(OUTPUT_VIZ_DIR, exist_ok=True)
 
 # --- Funciones ---
@@ -104,7 +103,7 @@ def load_processed_data(graph_path, id2idx_path, idx2id_path, locations_path):
         logging.info(f"Ubicaciones cargadas en {time.time() - start_time:.2f} seg: {len(locations)} localizaciones.")
     except FileNotFoundError:
         logging.warning(f"Advertencia: Archivo de ubicaciones no encontrado: {locations_path}. Viz geo no funcionará.")
-        locations = None # Asegurar que es None
+        locations = None
     except Exception as e:
         logging.error(f"Error al cargar las ubicaciones: {e}", exc_info=True)
         logging.warning("Continuando sin datos de ubicación debido a error.")
@@ -114,14 +113,11 @@ def load_processed_data(graph_path, id2idx_path, idx2id_path, locations_path):
     if g_igraph and id2idx and idx2id:
          if g_igraph.vcount() != len(id2idx) or g_igraph.vcount() != len(idx2id):
              logging.warning("Inconsistencia detectada: Número de nodos igraph no coincide con tamaño de mapeos.")
-         # Verificar si algunos nodos del grafo no están en los mapeos (no debería pasar)
          sample_indices = random.sample(range(g_igraph.vcount()), min(100, g_igraph.vcount()))
          if not all(idx in idx2id for idx in sample_indices):
               logging.warning("Advertencia: Algunos índices de igraph no se encuentran en idx2id.")
 
     return g_igraph, id2idx, idx2id, locations
-
-# --- Helper para Subgrafos y Conversión ---
 
 def create_sampled_networkx_subgraph(g_igraph, idx2id, max_nodes, sampling_method='random'):
     """
@@ -186,7 +182,6 @@ def create_sampled_networkx_subgraph(g_igraph, idx2id, max_nodes, sampling_metho
         # La forma correcta es iterar sobre los índices muestreados:
         vertex_names = {v_idx: str(idx2id[v_idx]) for v_idx in sampled_indices if v_idx in idx2id}
         # Mapear los índices del *subgrafo* a los nombres correctos
-        # Nota: subg_igraph.vs['name'] asigna al índice *del subgrafo* (0..N-1)
         # Necesitamos mapear índice_subgrafo -> índice_original -> nombre
         original_indices_in_subgraph = [v.index for v in subg_igraph.vs] # Índices originales de los nodos que QUEDARON en el subgrafo
         subg_igraph.vs["name"] = [vertex_names[orig_idx] for orig_idx in original_indices_in_subgraph]
@@ -208,7 +203,7 @@ def create_sampled_networkx_subgraph(g_igraph, idx2id, max_nodes, sampling_metho
          return nx.DiGraph(), []
     except Exception as e:
         logging.error(f"Error convirtiendo subgrafo igraph a NetworkX: {e}", exc_info=True)
-        return nx.DiGraph(), [] # Devolver grafo vacío
+        return nx.DiGraph(), []
 
     return subG_nx, subgraph_original_ids
 
@@ -224,8 +219,7 @@ def get_original_degree(node_id, g_igraph, id2idx, mode='in'):
             return g_igraph.degree(idx, mode=igraph_mode)
         return 0 # Si no se encuentra el ID o índice inválido
     except Exception as e:
-        # logging.debug(f"Error obteniendo grado para {node_id}: {e}") # Demasiado verboso
-        return 0 # Fallback
+        return 0
 
 def calculate_centralities(g_igraph, idx2id, measure='pagerank'):
     """Calcula una medida de centralidad en el grafo igraph completo."""
@@ -240,19 +234,15 @@ def calculate_centralities(g_igraph, idx2id, measure='pagerank'):
 
     try:
         if measure == 'pagerank':
-            # PageRank es generalmente seguro y rápido
-            raw_values = g_igraph.pagerank(implementation="prpack") # 'prpack' suele ser robusto
+            raw_values = g_igraph.pagerank(implementation="prpack")
 
         elif measure == 'betweenness':
-            # Betweenness puede ser MUY LENTO en grafos grandes.
             # Considera añadir un límite o usar una aproximación si es necesario.
             logging.warning("El cálculo de Betweenness Centrality en el grafo completo puede ser extremadamente lento o fallar por memoria.")
-            raw_values = g_igraph.betweenness(directed=True) # directed=True es importante
+            raw_values = g_igraph.betweenness(directed=True)
 
         elif measure == 'eigenvector':
-            # Eigenvector Centrality también puede ser lento y sensible a la estructura
             logging.info("Calculando Eigenvector Centrality (puede ser lento)...")
-            # Puede necesitar más iteraciones o fallar en converger en algunos grafos
             raw_values = g_igraph.eigenvector_centrality(directed=True, scale=True)
 
         else:
@@ -262,7 +252,7 @@ def calculate_centralities(g_igraph, idx2id, measure='pagerank'):
         # Mapear los resultados (indexados por igraph) a IDs originales
         # Iterar sobre los índices válidos del grafo (0 a vcount-1)
         for i in range(num_nodes):
-            if i < len(raw_values) and i in idx2id: # Doble check
+            if i < len(raw_values) and i in idx2id:
                  centrality_values[idx2id[i]] = raw_values[i]
             # else: # Loggear si falta mapeo o valor (debería ser raro)
             #    logging.debug(f"Índice igraph {i} sin mapeo o valor de centralidad.")
@@ -279,7 +269,7 @@ def calculate_centralities(g_igraph, idx2id, measure='pagerank'):
         logging.error(f"Error calculando centralidad '{measure}': {e}", exc_info=True)
         return None
 
-# --- Funciones de Visualización (Adaptadas y Mejoradas) ---
+# --- Funciones de Visualización ---
 
 def basic_graph_visualization(g_igraph, idx2id, title="Subgrafo Red Social (Estático)", save_path=None, max_nodes=MAX_NODES_BASIC_VIZ):
     """Visualiza un subgrafo pequeño usando matplotlib, convirtiendo solo el subgrafo."""
@@ -290,7 +280,7 @@ def basic_graph_visualization(g_igraph, idx2id, title="Subgrafo Red Social (Est�
     # Crear subgrafo y convertirlo a NetworkX
     # Usar muestreo por grado para intentar capturar nodos más interesantes
     subG_nx, _ = create_sampled_networkx_subgraph(g_igraph, idx2id, max_nodes, sampling_method='degree')
-    if subG_nx.number_of_nodes() == 0: # Si falla por grado, intentar aleatorio
+    if subG_nx.number_of_nodes() == 0:
          subG_nx, _ = create_sampled_networkx_subgraph(g_igraph, idx2id, max_nodes, sampling_method='random')
 
     if subG_nx.number_of_nodes() == 0:
@@ -366,12 +356,9 @@ def community_visualization(g_igraph, id2idx, idx2id, save_path=None, max_nodes=
         subg_igraph_comm = g_igraph.subgraph(sampled_indices_comm)
         logging.info(f"Detectando comunidades en subgrafo igraph de {subg_igraph_comm.vcount()} nodos...")
 
-        # Preferir Leiden si está instalado
         if leidenalg:
              algo_used = "Leiden"
              logging.info("Usando algoritmo Leiden (igraph)...")
-             # Considerar usar pesos si fueran relevantes (ej. g.es['weight'])
-             # Usar resolución si se quiere ajustar el número de comunidades
              part = leidenalg.find_partition(subg_igraph_comm.copy().to_undirected(), leidenalg.ModularityVertexPartition, seed=42)
              membership = part.membership
              modularity = part.modularity
@@ -413,7 +400,6 @@ def community_visualization(g_igraph, id2idx, idx2id, save_path=None, max_nodes=
         return None # Retornar None si no hay partición
 
     # --- Visualización Estática (Matplotlib con NetworkX) ---
-    # Convertir el subgrafo usado para la detección (o uno similar) a NX para dibujar
     subG_nx_viz, _ = create_sampled_networkx_subgraph(g_igraph, idx2id, max_nodes)
 
     if subG_nx_viz.number_of_nodes() == 0:
@@ -488,7 +474,6 @@ def interactive_visualization(g_igraph, id2idx, idx2id, locations=None, communit
     pos_3d = {}
     use_geo_layout = False
     subG_nx_viz = subG_nx # Usar una copia por si filtramos para geo
-    # (El código para elegir layout y calcular pos_3d se mantiene igual que en la versión anterior)
     if locations:
         nodes_with_loc = {n for n in subG_nx.nodes() if n in locations}
         coverage = len(nodes_with_loc) / subG_nx.number_of_nodes() if subG_nx.number_of_nodes() > 0 else 0
@@ -505,7 +490,7 @@ def interactive_visualization(g_igraph, id2idx, idx2id, locations=None, communit
                  lat_rad, lon_rad = np.radians(lat), np.radians(lon)
                  x = np.cos(lat_rad) * np.cos(lon_rad); y = np.cos(lat_rad) * np.sin(lon_rad); z = np.sin(lat_rad)
                  pos_3d[node] = (x, y, z)
-             subG_nx_viz = subG_nx_filtered # Usar el filtrado para la visualización
+             subG_nx_viz = subG_nx_filtered
         else: logging.info("Cobertura de ubicación insuficiente. Usando layout spring 3D.")
 
     if not use_geo_layout:
@@ -563,7 +548,7 @@ def interactive_visualization(g_igraph, id2idx, idx2id, locations=None, communit
              coloring_mode = "Comunidad"
              community_ids = [communities.get(node, -1) for node in subG_nx_viz.nodes()]
              num_comms = len(set(community_ids) - {-1})
-             node_colors = community_ids # Usar IDs directamente
+             node_colors = community_ids
              color_title = 'Comunidad ID'
              colorscale = 'Turbo' if num_comms > 10 else 'Viridis' # Escalas categóricas
              # Mantener tamaño por grado si coloreamos por comunidad
@@ -577,7 +562,7 @@ def interactive_visualization(g_igraph, id2idx, idx2id, locations=None, communit
         colorscale = 'YlGnBu'
         node_sizes = [5 + 3 * np.log1p(get_original_degree(node, 'all', g_igraph, id2idx)) for node in subG_nx_viz.nodes()]
 
-    # Generar Hover Text (siempre incluir todo lo disponible)
+    # Generar Hover Text
     logging.info("Generando texto de hover...")
     for i, node in enumerate(subG_nx_viz.nodes()):
         in_deg = get_original_degree(node, 'in', g_igraph, id2idx)
@@ -598,7 +583,7 @@ def interactive_visualization(g_igraph, id2idx, idx2id, locations=None, communit
         x=node_x, y=node_y, z=node_z, mode='markers', name='Usuarios',
         marker=dict(symbol='circle',
                     size=node_sizes,
-                    sizemode='diameter', # 'diameter' o 'area'
+                    sizemode='diameter',
                     color=node_colors,
                     colorscale=colorscale,
                     colorbar=dict(title=color_title, thickness=15, len=0.7, x=1.05), # Ajustar colorbar
@@ -650,13 +635,13 @@ def degree_distribution_visualization(g_igraph, save_path=None):
         in_degrees = g_igraph.degree(mode=ig.IN)
         out_degrees = g_igraph.degree(mode=ig.OUT)
         if not in_degrees or not out_degrees: logging.warning("Grados cero."); return
-        in_degree_counts = Counter(d for d in in_degrees if d > 0) # Ignorar grado 0 para log plot
+        in_degree_counts = Counter(d for d in in_degrees if d > 0)
         out_degree_counts = Counter(d for d in out_degrees if d > 0)
         logging.info(f"Cálculo de grados (igraph) completado en {time.time() - start_time:.2f} segundos.")
     except MemoryError: logging.error("Error de memoria calculando grados (igraph)."); return
     except Exception as e: logging.error(f"Error calculando grados (igraph): {e}", exc_info=True); return
 
-    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(16, 7)) # Un poco más de altura
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(16, 7))
 
     # Plot In-degree
     if in_degree_counts:
@@ -694,7 +679,7 @@ def degree_distribution_visualization(g_igraph, save_path=None):
 
 
 def geo_visualization(g_igraph, id2idx, idx2id, locations,
-                      centrality_map=None, centrality_name='Centrality', # Opcional para hover/color
+                      centrality_map=None, centrality_name='Centrality',
                       save_path=None, max_nodes=MAX_NODES_GEO_VIZ,
                       color_metric='followers'): # 'followers' o 'centrality'
     """Visualiza la distribución geográfica, opcionalmente coloreada por centralidad."""
@@ -731,11 +716,9 @@ def geo_visualization(g_igraph, id2idx, idx2id, locations,
                      'id': node_id, 'latitude': float(lat), 'longitude': float(lon), # Convertir a float estándar
                      'followers': in_deg, 'viz_size': size
                  }
-                 # Añadir centralidad si está disponible
                  if centrality_map and node_id in centrality_map:
                      data_entry['centrality'] = centrality_map[node_id]
                  node_data.append(data_entry)
-            # else: # Ignorar silenciosamente coordenadas inválidas
         except Exception as e: logging.error(f"Error procesando datos geo para nodo {node_id}: {e}")
 
     if not node_data: logging.error("No se extrajeron datos válidos para el mapa."); return None
@@ -766,7 +749,7 @@ def geo_visualization(g_igraph, id2idx, idx2id, locations,
     logging.info("Generando mapa interactivo con Plotly Express...")
     fig = None
     try:
-        fig = px.scatter_mapbox( # Usar scatter_mapbox para mejor rendimiento/apariencia
+        fig = px.scatter_mapbox(
                            node_df,
                            lat='latitude',
                            lon='longitude',
@@ -879,7 +862,7 @@ def visualize_graph_relationships(g_igraph, id2idx, idx2id, max_nodes=1000, save
                 hoverinfo='none'
             )
             
-            # Calcular punto para la flecha (80% del camino)
+            # Calcular punto para la flecha
             arrow_x = x0 + 0.8*(x1-x0)
             arrow_y = y0 + 0.8*(y1-y0)
             arrow_z = z0 + 0.8*(z1-z0)
@@ -1245,11 +1228,11 @@ if __name__ == "__main__":
     else:
         logging.warning("Saltando viz geo (PageRank): no se cargaron ubicaciones.")
 
-    # 3.7. Viz geográfica (coloreada por Seguidores - como antes)
+    # 3.7. Viz geográfica
     logging.info("\n--- 3.7 Iniciando Visualización Geográfica (Color: Seguidores) ---")
     if locations_main:
         geo_visualization(g_igraph_main, id2idx_main, idx2id_main, locations_main,
-                          centrality_map=pagerank_map, centrality_name='PageRank', # Aún pasarla para hover
+                          centrality_map=pagerank_map, centrality_name='PageRank',
                           color_metric='followers', # Decirle que coloree por seguidores
                           save_path="viz_geographic_followers.html",
                           max_nodes=MAX_NODES_GEO_VIZ)

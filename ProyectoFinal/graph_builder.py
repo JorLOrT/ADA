@@ -225,7 +225,7 @@ def perform_basic_analysis(g, idx2id):
         # Densidad del grafo
         # For directed graph, density = E / (V * (V - 1))
         density = g.density()
-        logging.info(f"Análisis - Densidad del grafo: {density:.4e}") # Use scientific notation for small densities
+        logging.info(f"Análisis - Densidad del grafo: {density:.4e}")
 
         # IDs originales
         original_ids = list(idx2id.values())
@@ -233,7 +233,6 @@ def perform_basic_analysis(g, idx2id):
         logging.info(f"Análisis - Usuario con el ID original más alto: {max_id}")
 
         # Grados (In-degree y Out-degree)
-        # Using g.degree() is efficient in igraph
         logging.info("Calculando grados...")
         indegrees = g.degree(mode="in")
         outdegrees = g.degree(mode="out")
