@@ -48,7 +48,7 @@ git clone https://github.com/usuario/procesador-redes-sociales.git
 cd procesador-redes-sociales
 
 # Instalar dependencias
-pip install numpy python-igraph
+pip install numpy igraph networkx matplotlib plotly pandas tqdm python-louvain leidenalg
 
 # Crear directorio para datos procesados
 mkdir -p ./processed_data
