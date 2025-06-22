@@ -4,393 +4,349 @@ import time
 import os
 import logging
 import pickle
+from math import radians, cos, sin, asin, sqrt
 
-NUM_USERS = 10_000_000
-# Ajusta estas rutas a tu ubicación real
-LOCATION_TXT_FILE = './dataset/10_million_location.txt'
-USER_TXT_FILE = './dataset/10_million_user.txt'
-OUTPUT_DIR = './processed_data' # Directorio para guardar salida
+# --- Constantes y Configuración ---
+NUM_USERS_REFERENCE = 10_000_000
+LOCATION_TXT_FILE = 'D:\\ADA\\dataset\\10_million_location.txt'
+USER_TXT_FILE = 'D:\\ADA\\dataset\\10_million_user.txt'
+OUTPUT_DIR = './processed_data_igraph'
+GRAPH_PKL_FILE = os.path.join(OUTPUT_DIR, "social_network.igraph.pkl")
+LOCATIONS_NPY_FILE = os.path.join(OUTPUT_DIR, "social_network_locations.npy")
+ID_MAP_PKL_FILE = os.path.join(OUTPUT_DIR, "social_network_id_mappings.pkl")
+COMMUNITIES_PKL_FILE = os.path.join(OUTPUT_DIR, "social_network_communities.pkl")
+LOG_FILE = os.path.join(OUTPUT_DIR, "graph_processing.log")
 
-GRAPH_IGRAPH_FILE = os.path.join(OUTPUT_DIR, "social_network_graph_10M.igraph.pkl")
-LOCATIONS_PKL_FILE = os.path.join(OUTPUT_DIR, "social_network_locations_10M.pkl")
-IDX2ID_PKL_FILE = os.path.join(OUTPUT_DIR, "social_network_idx2id_10M.pkl")
-ID2IDX_PKL_FILE = os.path.join(OUTPUT_DIR, "social_network_id2idx_10M.pkl") 
-LOG_FILE = "graph_builder.log"
-
-# --- Logging Setup ---
-logging.basicConfig(level=logging.INFO,
-                    format='%(asctime)s - %(levelname)s - %(message)s',
-                    handlers=[logging.FileHandler(LOG_FILE, mode='w'), # mode='w' para sobrescribir log
-                              logging.StreamHandler()])
-
-# --- Ensure Output Directory Exists ---
+# --- Configuración del Logging ---
 os.makedirs(OUTPUT_DIR, exist_ok=True)
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.FileHandler(LOG_FILE, mode='w'),
+        logging.StreamHandler()
+    ]
+)
 
-# --- Functions ---
+# --- Funciones Auxiliares ---
+def haversine_distance(lat1, lon1, lat2, lon2):
+    """Calcula la distancia en kilómetros entre dos puntos (lat, lon) en la Tierra."""
+    lon1, lat1, lon2, lat2 = map(radians, [lon1, lat1, lon2, lat2])
+    dlon = lon2 - lon1
+    dlat = lat2 - lat1
+    a = sin(dlat / 2)**2 + cos(lat1) * cos(lat2) * sin(dlon / 2)**2
+    c = 2 * asin(sqrt(a))
+    r = 6371
+    return c * r
 
-def load_locations_numpy(filepath, num_users):
+class GraphProcessor:
     """
-    Loads user locations efficiently using numpy.
+    Clase para encapsular la carga, construcción, análisis y guardado
+    de un grafo de red social a gran escala usando igraph.
     """
-    logging.info(f"Iniciando carga de ubicaciones desde {filepath} para {num_users} usuarios.")
-    start = time.time()
-    locations = None
-    try:
-        # Guardando espacios para mejorar la efeciencia del array numpy
-        locations = np.zeros((num_users, 2), dtype=np.float32)
-        count = 0
-        with open(filepath, 'r') as f:
-            for i, line in enumerate(f):
-                if i >= num_users:
-                    logging.warning(f"Se encontraron más líneas de las esperadas ({num_users}). Deteniendo en la línea {i}.")
-                    break
-                try:
-                    lat, lon = map(float, line.strip().split(','))
-                    # Basic validation
-                    if -90 <= lat <= 90 and -180 <= lon <= 180:
-                        locations[i] = [lat, lon]
-                        count += 1
-                    else:
-                        logging.warning(f"Coordenadas inválidas en línea {i+1}: {lat}, {lon}. Usando [0, 0].")
-                        locations[i] = [0.0, 0.0] 
-                except ValueError:
-                    logging.error(f"Error al parsear la línea {i+1}: '{line.strip()}'. Usando [0, 0].")
-                    locations[i] = [0.0, 0.0] 
-                except Exception as e:
-                     logging.error(f"Error inesperado procesando línea {i+1}: {e}")
-                     locations[i] = [0.0, 0.0]
+    def __init__(self, user_filepath, location_filepath):
+        self.user_filepath = user_filepath
+        self.location_filepath = location_filepath
+        self.graph = None
+        self.id2idx = None
+        self.idx2id = None
+        self.locations = None
+        self.communities = None
 
-        elapsed = time.time() - start
-        logging.info(f"Tiempo de carga de {count}/{num_users} ubicaciones válidas: {elapsed:.2f} segundos.")
-        if count < num_users:
-             logging.warning(f"Solo se cargaron {count} ubicaciones válidas de {num_users} esperadas.")
-        return locations
+    def _load_locations(self):
+        """Carga las ubicaciones de los usuarios en un array de NumPy."""
+        logging.info(f"Iniciando carga de ubicaciones desde {self.location_filepath}")
+        start_time = time.time()
+        try:
+            # Asumimos que el archivo de locaciones tiene N líneas, correspondiendo a usuarios 1..N
+            self.locations = np.loadtxt(self.location_filepath, delimiter=',', dtype=np.float32)
+            if self.locations.shape[1] != 2:
+                raise ValueError("El archivo de ubicaciones no tiene 2 columnas.")
+            elapsed = time.time() - start_time
+            logging.info(f"Se cargaron {len(self.locations)} ubicaciones en {elapsed:.2f} segundos.")
+        except FileNotFoundError:
+            logging.error(f"Error Crítico: Archivo de ubicaciones no encontrado en {self.location_filepath}.")
+            self.locations = None
+        except Exception as e:
+            logging.error(f"Error Crítico al cargar ubicaciones: {e}", exc_info=True)
+            self.locations = None
 
-    except FileNotFoundError:
-        logging.error(f"Error Crítico: Archivo de ubicaciones no encontrado en {filepath}.")
-        return None
-    except MemoryError:
-        logging.error("Error Crítico: Memoria insuficiente para cargar las ubicaciones.")
-        return None
-    except Exception as e:
-        logging.error(f"Error Crítico inesperado al cargar ubicaciones: {e}", exc_info=True)
-        return None
-
-def build_graph_igraph_memory_optimized(user_filepath):
-    """
-    Se opto por construir el grafo usando igraph de manera eficiente, evitando listas de aristas intermedias grandes.
-    """
-    logging.info(f"Iniciando construcción optimizada de grafo desde {user_filepath}.")
-    start_mapping = time.time()
-    user_ids = set()
-    max_original_id_seen = -1
-
-    # --- Primera pasada: Recolectar todos los IDs únicos ---
-    logging.info("Primera pasada: Recolectando IDs únicos...")
-    lines_processed_pass1 = 0
-    try:
-        with open(user_filepath, 'r') as f:
-            for i, line in enumerate(f):
-                try:
-                    ids_str = line.strip().split(',')
-                    if not ids_str or not ids_str[0]: continue # Ignorar líneas vacías o mal formadas
-
-                    # Convertir a int aquí para validación temprana
-                    ids = [int(id_str) for id_str in ids_str]
-
-                    src = ids[0]
-                    user_ids.add(src)
-                    max_original_id_seen = max(max_original_id_seen, src)
-                    for dst in ids[1:]:
-                        user_ids.add(dst)
-                        max_original_id_seen = max(max_original_id_seen, dst)
-                    lines_processed_pass1 += 1
-                except ValueError:
-                    logging.warning(f"Error al parsear IDs (ValueError) en línea {i+1}: '{line.strip()}'. Línea ignorada.")
-                except Exception as e:
-                    logging.error(f"Error inesperado procesando línea {i+1} en pasada 1: {e}. Línea ignorada.")
-
-        logging.info(f"Primera pasada completada. {lines_processed_pass1} líneas procesadas.")
-
-        if not user_ids:
-            logging.error("No se encontraron IDs de usuario válidos en el archivo.")
-            return None, None, None
-
-        # --- Crear Mapeos ---
-        sorted_user_ids = sorted(list(user_ids))
-        id2idx = {uid: idx for idx, uid in enumerate(sorted_user_ids)}
-        idx2id = {idx: uid for uid, idx in id2idx.items()}
-        num_unique_nodes = len(id2idx)
-        logging.info(f"Mapeados {num_unique_nodes} IDs únicos a índices (0 a {num_unique_nodes-1}).")
-        logging.info(f"ID original máximo encontrado: {max_original_id_seen}") # Útil para debug
-        elapsed_mapping = time.time() - start_mapping
-        logging.info(f"Tiempo para recolectar IDs y crear mapeos: {elapsed_mapping:.2f} segundos.")
-
-    except FileNotFoundError:
-        logging.error(f"Error Crítico: Archivo de usuarios no encontrado en {user_filepath}.")
-        return None, None, None
-    except MemoryError:
-        logging.error("Error Crítico: Memoria insuficiente durante la recolección de IDs o creación de mapeos.")
-        return None, None, None
-    except Exception as e:
-        logging.error(f"Error Crítico inesperado durante la pasada 1 o mapeo: {e}", exc_info=True)
-        return None, None, None
-
-    # --- Generador de Aristas (Segunda Pasada) ---
-    def edge_generator(filepath, id_map):
-        logging.info("Segunda pasada: Generando aristas (índices igraph)...")
-        edge_count = 0
-        lines_processed_pass2 = 0
-        with open(filepath, 'r') as f:
-            for i, line in enumerate(f):
-                try:
-                    ids_str = line.strip().split(',')
-                    if not ids_str or len(ids_str) < 2: continue 
-                    
-                    ids_int = []
-                    valid_line = True
-                    for id_s in ids_str:
-                        try:
-                            ids_int.append(int(id_s))
-                        except ValueError:
-                            logging.warning(f"ID inválido '{id_s}' en línea {i+1}. Ignorando ID.")
-                            valid_line = False 
-                            break 
-                    if not valid_line or len(ids_int) < 2: continue
-
-                    src_orig = ids_int[0]
-                    # Obtener índice igraph (manejar KeyError si un ID no estaba en la pasada 1, aunque no debería pasar)
-                    src_idx = id_map.get(src_orig)
-                    if src_idx is None:
-                         logging.warning(f"ID origen {src_orig} de línea {i+1} no encontrado en mapeo. Ignorando aristas de esta línea.")
-                         continue
-
-                    for dst_orig in ids_int[1:]:
-                        dst_idx = id_map.get(dst_orig)
-                        if dst_idx is None:
-                            logging.warning(f"ID destino {dst_orig} de línea {i+1} no encontrado en mapeo. Ignorando esta arista.")
-                            continue
-
-                        yield (src_idx, dst_idx)
-                        edge_count += 1
-                    lines_processed_pass2 +=1
-
-                except Exception as e:
-                    # Error inesperado leyendo la línea en la segunda pasada
-                    logging.error(f"Error inesperado procesando línea {i+1} en pasada 2: {e}. Línea ignorada.")
-
-        logging.info(f"Segunda pasada completada. {lines_processed_pass2} líneas procesadas.")
-        logging.info(f"Generador entregó {edge_count} aristas.")
-
-    # --- Construir Grafo igraph usando el Generador ---
-    start_build = time.time()
-    g = None
-    try:
-        logging.info("Construyendo grafo igraph desde el generador de aristas...")
-        # Pasar el generador directamente a igraph
-        g = ig.Graph(n=num_unique_nodes,
-                     edges=edge_generator(user_filepath, id2idx),
-                     directed=True)
-
-        elapsed_build = time.time() - start_build
-        logging.info(f"Tiempo de construcción del grafo igraph (desde generador): {elapsed_build:.2f} segundos.")
-        logging.info(f"Grafo igraph final creado con {g.vcount()} nodos y {g.ecount()} aristas.")
-        return g, id2idx, idx2id
-
-    except MemoryError:
-        logging.error("Error Crítico: Memoria insuficiente durante la construcción final del grafo igraph.")
-        return None, None, None
-    except Exception as e:
-        logging.error(f"Error Crítico inesperado durante la construcción final del grafo igraph: {e}", exc_info=True)
-        return None, None, None
-    
-def perform_basic_analysis(g, idx2id):
-    """Performs basic graph analysis using igraph."""
-    if g is None or not idx2id:
-        logging.warning("Grafo no disponible para análisis básico.")
-        return
-
-    logging.info("Realizando análisis básico del grafo...")
-    start = time.time()
-
-    try:
-        num_nodes = g.vcount()
-        num_edges = g.ecount()
-        logging.info(f"Análisis - Nodos: {num_nodes}, Aristas: {num_edges}")
-
-        if num_nodes == 0:
-            logging.warning("Grafo vacío, análisis detenido.")
+    def _build_graph_two_pass(self):
+        """
+        Construye el grafo igraph usando un enfoque optimizado de dos pasadas.
+        CORREGIDO: El ID de usuario de origen es el número de línea.
+        """
+        if not os.path.exists(self.user_filepath):
+            logging.error(f"Error Crítico: Archivo de usuarios no encontrado en {self.user_filepath}.")
             return
 
-        # Densidad del grafo
-        # For directed graph, density = E / (V * (V - 1))
-        density = g.density()
-        logging.info(f"Análisis - Densidad del grafo: {density:.4e}")
+        logging.info("Iniciando pasada 1: Recolectando IDs de usuario únicos...")
+        start_time = time.time()
+        all_ids = set()
+        try:
+            with open(self.user_filepath, 'r') as f:
+                # Usamos enumerate para obtener el número de línea (empezando en 0)
+                for i, line in enumerate(f):
+                    # CAMBIO CLAVE: El ID del usuario de origen es el número de línea + 1
+                    source_id_orig = i + 1
+                    all_ids.add(source_id_orig)
 
-        # IDs originales
-        original_ids = list(idx2id.values())
-        max_id = max(original_ids) if original_ids else "N/A"
-        logging.info(f"Análisis - Usuario con el ID original más alto: {max_id}")
+                    # Los números en la línea son los IDs de los usuarios de destino
+                    target_ids_str = [p.strip() for p in line.split(',') if p.strip()]
+                    if not target_ids_str:
+                        continue
+                    
+                    # Añadimos los IDs de destino al conjunto de todos los IDs
+                    all_ids.update(map(int, target_ids_str))
 
-        # Grados (In-degree y Out-degree)
-        logging.info("Calculando grados...")
-        indegrees = g.degree(mode="in")
-        outdegrees = g.degree(mode="out")
+        except (ValueError, IndexError) as e:
+            logging.error(f"Error parseando IDs en la primera pasada: {e}. Revisa el formato del archivo.", exc_info=True)
+            return
 
-        # Usuario con más seguidores (mayor grado de entrada)
-        if indegrees:
-            idx_most_followed = np.argmax(indegrees)
-            user_most_followed = idx2id[idx_most_followed]
-            max_in_degree = indegrees[idx_most_followed]
-            logging.info(f"Análisis - Usuario con más seguidores: ID {user_most_followed} ({max_in_degree} seguidores)")
+        sorted_ids = sorted(list(all_ids))
+        self.id2idx = {uid: i for i, uid in enumerate(sorted_ids)}
+        self.idx2id = sorted_ids
+
+        num_nodes = len(self.idx2id)
+        logging.info(f"Pasada 1 completada en {time.time() - start_time:.2f}s. Encontrados {num_nodes} nodos únicos.")
+
+        def edge_generator():
+            with open(self.user_filepath, 'r') as f:
+                # Usamos enumerate de nuevo para mantener la consistencia
+                for i, line in enumerate(f):
+                    # CAMBIO CLAVE: El ID de origen es el número de línea + 1
+                    source_id_orig = i + 1
+                    
+                    # Obtenemos el índice del grafo para el nodo de origen
+                    # No es necesario comprobar si existe, porque lo añadimos en la pasada 1
+                    source_idx = self.id2idx[source_id_orig]
+                    
+                    # Parseamos los IDs de destino
+                    target_ids_str = [p.strip() for p in line.split(',') if p.strip()]
+                    if not target_ids_str:
+                        continue
+
+                    try:
+                        # CAMBIO CLAVE: Iteramos sobre TODOS los números de la línea como destinos
+                        for target_str in target_ids_str:
+                            target_id_orig = int(target_str)
+                            # Creamos una arista si el destino también es un nodo válido
+                            if target_id_orig in self.id2idx:
+                                yield (source_idx, self.id2idx[target_id_orig])
+                    except (ValueError, KeyError):
+                        # Ignora líneas o partes mal formateadas
+                        continue
+
+        logging.info("Iniciando pasada 2: Construyendo grafo desde el generador de aristas...")
+        start_time = time.time()
+        self.graph = ig.Graph(n=num_nodes, edges=edge_generator(), directed=True)
+        logging.info(f"Grafo construido en {time.time() - start_time:.2f}s.")
+        logging.info(f"Grafo final: {self.graph.vcount()} nodos, {self.graph.ecount()} aristas.")
+        self.graph.simplify(multiple=True, loops=True)
+        logging.info(f"Grafo simplificado (eliminando duplicados y bucles): {self.graph.vcount()} nodos, {self.graph.ecount()} aristas.")
+
+    def run_build_pipeline(self):
+        """Ejecuta el pipeline completo de carga y construcción."""
+        self._load_locations()
+        self._build_graph_two_pass()
+        if self.graph:
+            self._add_attributes_to_graph()
+
+    def _add_attributes_to_graph(self):
+        """Añade atributos de ID original y ubicación a los vértices del grafo."""
+        if self.locations is None:
+            logging.warning("No hay datos de ubicación para añadir al grafo. Se usarán coordenadas (0,0).")
+        
+        logging.info("Asignando atributos a los nodos del grafo...")
+        self.graph.vs["original_id"] = self.idx2id
+        
+        latitudes = np.zeros(self.graph.vcount(), dtype=np.float32)
+        longitudes = np.zeros(self.graph.vcount(), dtype=np.float32)
+        
+        # Mapeamos las ubicaciones a los nodos del grafo
+        # El archivo de ubicaciones corresponde a los usuarios 1, 2, 3...
+        # Su índice en el array `self.locations` es `id - 1`
+        for i, original_id in enumerate(self.idx2id):
+            # Comprobamos si el ID tiene una ubicación válida
+            if 1 <= original_id <= len(self.locations):
+                loc_idx = original_id - 1
+                latitudes[i] = self.locations[loc_idx, 0]
+                longitudes[i] = self.locations[loc_idx, 1]
+        
+        self.graph.vs["latitude"] = latitudes.tolist()
+        self.graph.vs["longitude"] = longitudes.tolist()
+        logging.info("Atributos de ID original y ubicación asignados.")
+
+
+    def analyze_basic_metrics(self):
+        """Realiza un análisis básico del grafo."""
+        if not self.graph: logging.warning("Grafo no disponible para análisis básico."); return
+        logging.info("Realizando análisis básico del grafo...")
+        start = time.time()
+        num_nodes, num_edges = self.graph.vcount(), self.graph.ecount()
+        logging.info(f"Análisis - Nodos: {num_nodes}, Aristas: {num_edges}")
+        if num_nodes == 0: logging.warning("Grafo vacío, análisis detenido."); return
+        logging.info(f"Análisis - Densidad del grafo: {self.graph.density():.4e}")
+        components = self.graph.components(mode='weak')
+        logging.info(f"Análisis - Número de componentes conectados (débil): {len(components)}")
+        if len(components) > 0:
+            giant = components.giant()
+            logging.info(f"Análisis - Tamaño del componente conectado más grande: {giant.vcount()} nodos ({giant.vcount()/num_nodes*100:.2f}%)")
+        logging.info(f"Tiempo de análisis básico: {time.time() - start:.2f} segundos.")
+
+    def detect_communities(self, method='louvain'):
+        """Detecta comunidades usando un algoritmo especificado."""
+        if not self.graph: logging.error("El grafo no está construido."); return
+        logging.info(f"Iniciando detección de comunidades con el método '{method}'...")
+        start_time = time.time()
+        g_undirected = self.graph.as_undirected(mode='collapse')
+        if method == 'louvain':
+            self.communities = g_undirected.community_multilevel()
         else:
-             logging.warning("No se pudieron calcular los grados de entrada.")
+            logging.error(f"Método de detección de comunidades '{method}' no reconocido. Use 'louvain'.")
+            return
+        self.graph.vs["community"] = self.communities.membership
+        elapsed = time.time() - start_time
+        logging.info(f"Detección de comunidades completada en {elapsed:.2f}s. "
+                     f"Comunidades: {len(self.communities)}, Modularidad: {self.communities.modularity:.4f}")
 
+    def analyze_shortest_path(self, sample_size=1000):
+        """
+        Estima la longitud promedio del camino más corto de forma SECUENCIAL y con uso de memoria optimizado.
+        Este método es más lento que el paralelo pero consume significativamente menos memoria.
+        """
+        if not self.graph:
+            logging.error("El grafo no está construido."); return
 
-        # Usuario que sigue a más personas (mayor grado de salida)
-        if outdegrees:
-            idx_follows_most = np.argmax(outdegrees)
-            user_follows_most = idx2id[idx_follows_most]
-            max_out_degree = outdegrees[idx_follows_most]
-            logging.info(f"Análisis - Usuario que sigue a más personas: ID {user_follows_most} ({max_out_degree} seguidos)")
-        else:
-            logging.warning("No se pudieron calcular los grados de salida.")
+        logging.info(f"Estimando (en SECUENCIAL y con memoria optimizada) la longitud promedio del camino más corto con una muestra de {sample_size} nodos...")
+        start_time = time.time()
+        components = self.graph.components(mode='weak')
+        giant = components.giant()
+        if giant.vcount() < 2:
+            logging.warning("El componente gigante es demasiado pequeño para el análisis."); return
+        if giant.vcount() < sample_size:
+            sample_size = giant.vcount()
+            logging.warning(f"Tamaño de la muestra reducido a {sample_size} (tamaño del componente gigante).")
 
-        # Usuarios que no son seguidos por nadie (grado de entrada 0)
-        zero_indegree_indices = [i for i, degree in enumerate(indegrees) if degree == 0]
-        users_no_followed = [idx2id[idx] for idx in zero_indegree_indices]
-        logging.info(f"Análisis - Usuarios que no son seguidos por nadie ({len(users_no_followed)}): {users_no_followed[:10]}...") # Mostrar solo los primeros
+        sampled_vertices_indices = np.random.choice(giant.vcount(), size=sample_size, replace=False)
+        
+        ## CAMBIO: En lugar de una lista, usamos un acumulador para la suma y otro para el conteo.
+        total_path_lengths_sum = 0.0
+        total_paths_count = 0
 
-        # Componentes Conectados (considerar débilmente conectado para grafos dirigidos)
-        logging.info("Calculando componentes conectados...")
-        components = g.components(mode='weak')
-        num_components = len(components)
-        logging.info(f"Análisis - Número de componentes conectados (débil): {num_components}")
-        if num_components > 0:
-            largest_component = components.giant()
-            logging.info(f"Análisis - Tamaño del componente conectado más grande: {largest_component.vcount()} nodos ({largest_component.vcount()/num_nodes*100:.2f}%)")
+        logging.info("Iniciando bucle de cálculo secuencial...")
 
-        elapsed = time.time() - start
-        logging.info(f"Tiempo de análisis básico: {elapsed:.2f} segundos.")
+        for i, v_idx in enumerate(sampled_vertices_indices):
+            # Esta línea sigue consumiendo memoria temporalmente, pero se libera en cada iteración.
+            paths_from_v = giant.distances(source=v_idx)[0]
+            
+            ## CAMBIO: Iteramos sobre los caminos y actualizamos los acumuladores en lugar de guardar los caminos en una lista.
+            # Esto evita el MemoryError.
+            for p in paths_from_v:
+                if p != float('inf') and p > 0:
+                    total_path_lengths_sum += p
+                    total_paths_count += 1
+            
+            if (i + 1) % 100 == 0:
+                elapsed_min = (time.time() - start_time) / 60
+                logging.info(f"  ... procesados {i + 1}/{sample_size} nodos de muestra. (Tiempo transcurrido: {elapsed_min:.2f} min)")
 
-    except Exception as e:
-        logging.error(f"Error durante el análisis básico del grafo: {e}", exc_info=True)
-
-def save_processed_data(g_igraph, id2idx, idx2id, locations_np,
-                       graph_filepath, id2idx_filepath, idx2id_filepath, loc_filepath):
+        ## CAMBIO: Calculamos el promedio usando la suma y el conteo.
+        average_path_length = total_path_lengths_sum / total_paths_count if total_paths_count > 0 else float('inf')
+        
+        elapsed = time.time() - start_time
+        logging.info(f"Estimación secuencial completada en {elapsed:.2f}s.")
+        logging.info(f"  - Longitud promedio estimada del camino más corto: {average_path_length:.4f}")
+        return average_path_length
     
-    success_flags = {'graph': False, 'id2idx': False, 'idx2id': False, 'locations': False}
+    def calculate_mst_on_distance(self):
+        """Calcula el Árbol de Expansión Mínima (MST) basado en la distancia geográfica."""
+        if not self.graph or "latitude" not in self.graph.vs.attributes():
+            logging.error("Grafo o atributos de ubicación no disponibles para calcular el MST."); return
+        logging.info("Iniciando cálculo del Árbol de Expansión Mínima (MST) basado en distancia.")
+        start_time = time.time()
+        
+        # El MST solo tiene sentido en un grafo no dirigido
+        g_undirected = self.graph.as_undirected(mode='collapse')
+        
+        giant_comp = g_undirected.components(mode='weak').giant()
+        if giant_comp.vcount() < 2:
+            logging.warning("Componente gigante demasiado pequeño para calcular MST."); return
+        
+        logging.info(f"Calculando MST en el componente gigante ({giant_comp.vcount()} nodos).")
+        weights = [
+            haversine_distance(
+                giant_comp.vs[e.source]["latitude"], giant_comp.vs[e.source]["longitude"],
+                giant_comp.vs[e.target]["latitude"], giant_comp.vs[e.target]["longitude"]
+            ) for e in giant_comp.es
+        ]
+        
+        giant_comp.es["weight"] = weights
+        logging.info("Calculando MST con algoritmo optimizado de igraph...")
+        mst = giant_comp.spanning_tree(weights=giant_comp.es["weight"], return_tree=True)
+        total_mst_length = sum(mst.es["weight"])
+        elapsed = time.time() - start_time
+        logging.info(f"Cálculo del MST completado en {elapsed:.2f}s.")
+        logging.info(f"  - Longitud total del MST (suma de distancias en km): {total_mst_length:,.2f} km")
+        return mst, total_mst_length
 
-    if g_igraph is not None:
-        logging.info(f"Guardando grafo igraph en {graph_filepath}...")
-        start_save_g = time.time()
-        try:
-            
-            g_igraph.write_pickle(graph_filepath)
-            
-            elapsed_save_g = time.time() - start_save_g
-            logging.info(f"Grafo igraph guardado en {elapsed_save_g:.2f} segundos.")
-            success_flags['graph'] = True
-        except Exception as e:
-            logging.error(f"Error Crítico al guardar el grafo igraph: {e}", exc_info=True)
-    else:
-        logging.error("Grafo igraph no disponible para guardar.")
+    def save_data(self):
+        """Guarda todos los artefactos procesados en archivos."""
+        if self.graph:
+            logging.info(f"Guardando grafo en {GRAPH_PKL_FILE}...")
+            with open(GRAPH_PKL_FILE, 'wb') as f: pickle.dump(self.graph, f, protocol=pickle.HIGHEST_PROTOCOL)
+        if self.id2idx and self.idx2id:
+            logging.info(f"Guardando mapeos de ID en {ID_MAP_PKL_FILE}...")
+            with open(ID_MAP_PKL_FILE, 'wb') as f: pickle.dump({'id2idx': self.id2idx, 'idx2id': self.idx2id}, f, protocol=pickle.HIGHEST_PROTOCOL)
+        if self.locations is not None:
+             logging.info(f"Guardando array de ubicaciones en {LOCATIONS_NPY_FILE}...")
+             np.save(LOCATIONS_NPY_FILE, self.locations)
+        if self.communities:
+            logging.info(f"Guardando resultados de comunidades en {COMMUNITIES_PKL_FILE}...")
+            # Guardamos la membresía como una lista simple para mayor compatibilidad
+            membership_list = self.communities.membership
+            with open(COMMUNITIES_PKL_FILE, 'wb') as f: pickle.dump(membership_list, f, protocol=pickle.HIGHEST_PROTOCOL)
+        logging.info("Todos los datos procesados han sido guardados.")
 
-    if id2idx:
-        logging.info(f"Guardando mapeo id->idx en {id2idx_filepath}...")
-        start_save_map1 = time.time()
-        try:
-            with open(id2idx_filepath, 'wb') as f:
-                pickle.dump(id2idx, f, protocol=pickle.HIGHEST_PROTOCOL)
-            elapsed_save_map1 = time.time() - start_save_map1
-            logging.info(f"Mapeo id->idx guardado en {elapsed_save_map1:.2f} segundos.")
-            success_flags['id2idx'] = True
-        except Exception as e:
-            logging.error(f"Error al guardar el mapeo id->idx: {e}", exc_info=True)
-    else:
-         logging.warning("Mapeo id->idx no disponible para guardar.")
+    def get_followed_users(self, user_id):
+        """Devuelve una lista de los IDs de los usuarios seguidos por el usuario dado."""
+        if not self.graph or not self.id2idx:
+            logging.error("El grafo o los mapeos de ID no están disponibles."); return []
+        if user_id not in self.id2idx:
+            logging.warning(f"El usuario con ID {user_id} no se encuentra en el grafo."); return []
+        vertex_idx = self.id2idx[user_id]
+        followed_indices = self.graph.successors(vertex_idx)
+        return [self.idx2id[idx] for idx in followed_indices]
 
-    if idx2id:
-        logging.info(f"Guardando mapeo idx->id en {idx2id_filepath}...")
-        start_save_map2 = time.time()
-        try:
-            with open(idx2id_filepath, 'wb') as f:
-                pickle.dump(idx2id, f, protocol=pickle.HIGHEST_PROTOCOL)
-            elapsed_save_map2 = time.time() - start_save_map2
-            logging.info(f"Mapeo idx->id guardado en {elapsed_save_map2:.2f} segundos.")
-            success_flags['idx2id'] = True
-        except Exception as e:
-            logging.error(f"Error al guardar el mapeo idx->id: {e}", exc_info=True)
-    else:
-        logging.warning("Mapeo idx->id no disponible para guardar.")
-
-
-    if locations_np is not None:
-        logging.info(f"Preparando y guardando diccionario de ubicaciones en {loc_filepath}...")
-        start_save_loc = time.time()
-        locations_dict = {}
-        valid_locations_count = 0
-        nodes_in_graph_orig_ids = set(id2idx.keys()) # Obtener IDs originales del mapeo
-        try:
-            # Iterar hasta el máximo índice esperado O el tamaño del array numpy
-            max_possible_id = len(locations_np)
-            processed_ids = 0
-            for user_id in range(max_possible_id):
-
-                 if user_id in nodes_in_graph_orig_ids:
-                     loc_tuple = tuple(locations_np[user_id])
-                     # Validar tupla de ubicación por si acaso
-                     if (len(loc_tuple) == 2 and all(isinstance(x, (int, float, np.number)) for x in loc_tuple) and
-                         -90 <= loc_tuple[0] <= 90 and -180 <= loc_tuple[1] <= 180):
-                         locations_dict[user_id] = loc_tuple
-                         valid_locations_count += 1
-                     else:
-                         logging.warning(f"Ubicación inválida encontrada para ID {user_id}: {loc_tuple}. Ignorada.")
-                     processed_ids += 1
-
-
-            logging.info(f"Se prepararon {valid_locations_count} ubicaciones para usuarios presentes en el grafo.")
-
-            with open(loc_filepath, 'wb') as f:
-                pickle.dump(locations_dict, f, protocol=pickle.HIGHEST_PROTOCOL)
-            elapsed_save_loc = time.time() - start_save_loc
-            logging.info(f"Diccionario de ubicaciones guardado en {elapsed_save_loc:.2f} segundos.")
-            success_flags['locations'] = True
-        except IndexError:
-            logging.error(f"Error de índice al acceder a locations_np. ¿El tamaño ({len(locations_np)}) coincide con los IDs esperados?")
-        except Exception as e:
-            logging.error(f"Error al guardar las ubicaciones: {e}", exc_info=True)
-    else:
-        logging.warning("No hay datos de ubicación para guardar.")
-        success_flags['locations'] = True
-
-    # Retornar True si al menos el grafo y los mapeos se guardaron
-    return success_flags['graph'] and success_flags['id2idx'] and success_flags['idx2id']
-
-
-# --- Main Execution ---
+# --- Punto de Entrada del Script ---
 if __name__ == "__main__":
-    logging.info("--- Iniciando Script de Construcción de Grafo (Optimizado para Memoria) ---")
-
-    # 1. Cargar Ubicaciones
-    locations_data = load_locations_numpy(LOCATION_TXT_FILE, NUM_USERS) 
-    # Si locations_data es None, se manejará en la función de guardado
-
-    # 2. Construir Grafo (igraph) - Versión Optimizada
-    graph_igraph, id_to_idx, idx_to_id = build_graph_igraph_memory_optimized(USER_TXT_FILE)
-
-    if graph_igraph is None:
-        logging.critical("No se pudo construir el grafo igraph. Terminando.")
-        exit()
-
-    # 3. Análisis Básico (igraph
-    perform_basic_analysis(graph_igraph, idx_to_id)
-
-    # 4. Guardar Datos Procesados (igraph, mapeos, ubicaciones)
-    success = save_processed_data(graph_igraph, id_to_idx, idx_to_id, locations_data,
-                                  GRAPH_IGRAPH_FILE, ID2IDX_PKL_FILE, IDX2ID_PKL_FILE, LOCATIONS_PKL_FILE)
-
-    if success:
-        logging.info("--- Script de Construcción de Grafo Completado Exitosamente ---")
+    if not all(os.path.exists(f) for f in [LOCATION_TXT_FILE, USER_TXT_FILE]):
+        logging.critical(f"Error: No se encontraron los archivos de entrada. Revisa las rutas:\n  {LOCATION_TXT_FILE}\n  {USER_TXT_FILE}")
     else:
-         logging.error("--- Script de Construcción de Grafo Completado con ERRORES al guardar datos esenciales ---")
+        processor = GraphProcessor(USER_TXT_FILE, LOCATION_TXT_FILE)
+        processor.run_build_pipeline()
+
+        if processor.graph:
+            processor.analyze_basic_metrics()
+            processor.detect_communities(method='louvain')
+            
+            # Llamada a la función SECUENCIAL para el análisis de caminos
+            processor.analyze_shortest_path(sample_size=1000)
+            
+            processor.calculate_mst_on_distance()
+            processor.save_data()
+
+            #Demostración de la función de consulta
+            logging.info("--- EJEMPLO DE USO DE get_followed_users ---")
+            test_user_id = processor.idx2id[710]
+            logging.info(f"Buscando a quién sigue el usuario con ID original: {test_user_id}...")
+            followed_users_list = processor.get_followed_users(test_user_id)
+            if followed_users_list:
+                logging.info(f"El usuario {test_user_id} sigue a {len(followed_users_list)} usuarios. Primeros seguidos: {followed_users_list[:15]}")
+            else:
+                logging.info(f"El usuario {test_user_id} no sigue a nadie.")
+        
+
+            logging.info("--- ANÁLISIS COMPLETADO EXITOSAMENTE ---")
+        else:
+            logging.critical("La construcción del grafo falló. El script terminará.")
