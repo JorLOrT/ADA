@@ -4,7 +4,7 @@ import time
 import os
 import logging
 import pickle
-from math import radians, cos, sin, asin, sqrt
+from typing import List, Dict, Optional, Tuple
 
 # --- Constantes y Configuración ---
 NUM_USERS_REFERENCE = 10_000_000
@@ -12,6 +12,7 @@ LOCATION_TXT_FILE = 'D:\\ADA\\dataset\\10_million_location.txt'
 USER_TXT_FILE = 'D:\\ADA\\dataset\\10_million_user.txt'
 OUTPUT_DIR = './processed_data_igraph'
 GRAPH_PKL_FILE = os.path.join(OUTPUT_DIR, "social_network.igraph.pkl")
+MST_PKL_FILE = os.path.join(OUTPUT_DIR, "social_network_mst.igraph.pkl")
 LOCATIONS_NPY_FILE = os.path.join(OUTPUT_DIR, "social_network_locations.npy")
 ID_MAP_PKL_FILE = os.path.join(OUTPUT_DIR, "social_network_id_mappings.pkl")
 COMMUNITIES_PKL_FILE = os.path.join(OUTPUT_DIR, "social_network_communities.pkl")
@@ -29,39 +30,32 @@ logging.basicConfig(
 )
 
 # --- Funciones Auxiliares ---
-def haversine_distance(lat1, lon1, lat2, lon2):
-    """Calcula la distancia en kilómetros entre dos puntos (lat, lon) en la Tierra."""
-    lon1, lat1, lon2, lat2 = map(radians, [lon1, lat1, lon2, lat2])
+def haversine_vectorized(lat1: np.ndarray, lon1: np.ndarray, lat2: np.ndarray, lon2: np.ndarray) -> np.ndarray:
+    lon1, lat1, lon2, lat2 = map(np.radians, [lon1, lat1, lon2, lat2])
     dlon = lon2 - lon1
     dlat = lat2 - lat1
-    a = sin(dlat / 2)**2 + cos(lat1) * cos(lat2) * sin(dlon / 2)**2
-    c = 2 * asin(sqrt(a))
+    a = np.sin(dlat / 2)**2 + np.cos(lat1) * np.cos(lat2) * np.sin(dlon / 2)**2
+    c = 2 * np.arcsin(np.sqrt(a))
     r = 6371
     return c * r
 
 class GraphProcessor:
-    """
-    Clase para encapsular la carga, construcción, análisis y guardado
-    de un grafo de red social a gran escala usando igraph.
-    """
-    def __init__(self, user_filepath, location_filepath):
+    def __init__(self, user_filepath: str, location_filepath: str):
         self.user_filepath = user_filepath
         self.location_filepath = location_filepath
-        self.graph = None
-        self.id2idx = None
-        self.idx2id = None
-        self.locations = None
-        self.communities = None
+        self.graph: Optional[ig.Graph] = None
+        self.id2idx: Optional[Dict[int, int]] = None
+        self.idx2id: Optional[List[int]] = None
+        self.locations: Optional[np.ndarray] = None
+        self.communities: Optional[ig.VertexClustering] = None
 
-    def _load_locations(self):
-        """Carga las ubicaciones de los usuarios en un array de NumPy."""
+    def _load_locations(self) -> None:
         logging.info(f"Iniciando carga de ubicaciones desde {self.location_filepath}")
         start_time = time.time()
         try:
-            # Asumimos que el archivo de locaciones tiene N líneas, correspondiendo a usuarios 1..N
             self.locations = np.loadtxt(self.location_filepath, delimiter=',', dtype=np.float32)
-            if self.locations.shape[1] != 2:
-                raise ValueError("El archivo de ubicaciones no tiene 2 columnas.")
+            if self.locations.ndim != 2 or self.locations.shape[1] != 2:
+                raise ValueError("El archivo de ubicaciones debe tener 2 columnas (lat, lon).")
             elapsed = time.time() - start_time
             logging.info(f"Se cargaron {len(self.locations)} ubicaciones en {elapsed:.2f} segundos.")
         except FileNotFoundError:
@@ -71,282 +65,237 @@ class GraphProcessor:
             logging.error(f"Error Crítico al cargar ubicaciones: {e}", exc_info=True)
             self.locations = None
 
-    def _build_graph_two_pass(self):
-        """
-        Construye el grafo igraph usando un enfoque optimizado de dos pasadas.
-        CORREGIDO: El ID de usuario de origen es el número de línea.
-        """
+    def _build_graph_two_pass(self) -> None:
         if not os.path.exists(self.user_filepath):
             logging.error(f"Error Crítico: Archivo de usuarios no encontrado en {self.user_filepath}.")
             return
-
         logging.info("Iniciando pasada 1: Recolectando IDs de usuario únicos...")
         start_time = time.time()
         all_ids = set()
         try:
             with open(self.user_filepath, 'r') as f:
-                # Usamos enumerate para obtener el número de línea (empezando en 0)
                 for i, line in enumerate(f):
-                    # CAMBIO CLAVE: El ID del usuario de origen es el número de línea + 1
                     source_id_orig = i + 1
                     all_ids.add(source_id_orig)
-
-                    # Los números en la línea son los IDs de los usuarios de destino
-                    target_ids_str = [p.strip() for p in line.split(',') if p.strip()]
-                    if not target_ids_str:
-                        continue
-                    
-                    # Añadimos los IDs de destino al conjunto de todos los IDs
-                    all_ids.update(map(int, target_ids_str))
-
+                    target_ids_str = line.strip().split(',')
+                    if target_ids_str and target_ids_str[0]:
+                        all_ids.update(map(int, target_ids_str))
         except (ValueError, IndexError) as e:
-            logging.error(f"Error parseando IDs en la primera pasada: {e}. Revisa el formato del archivo.", exc_info=True)
+            logging.error(f"Error parseando IDs en la primera pasada: {e}.", exc_info=True)
             return
 
         sorted_ids = sorted(list(all_ids))
         self.id2idx = {uid: i for i, uid in enumerate(sorted_ids)}
         self.idx2id = sorted_ids
-
         num_nodes = len(self.idx2id)
-        logging.info(f"Pasada 1 completada en {time.time() - start_time:.2f}s. Encontrados {num_nodes} nodos únicos.")
+        logging.info(f"Pasada 1 completada en {time.time() - start_time:.2f}s. {num_nodes} nodos únicos encontrados.")
 
         def edge_generator():
             with open(self.user_filepath, 'r') as f:
-                # Usamos enumerate de nuevo para mantener la consistencia
                 for i, line in enumerate(f):
-                    # CAMBIO CLAVE: El ID de origen es el número de línea + 1
                     source_id_orig = i + 1
-                    
-                    # Obtenemos el índice del grafo para el nodo de origen
-                    # No es necesario comprobar si existe, porque lo añadimos en la pasada 1
                     source_idx = self.id2idx[source_id_orig]
-                    
-                    # Parseamos los IDs de destino
-                    target_ids_str = [p.strip() for p in line.split(',') if p.strip()]
-                    if not target_ids_str:
-                        continue
-
-                    try:
-                        # CAMBIO CLAVE: Iteramos sobre TODOS los números de la línea como destinos
-                        for target_str in target_ids_str:
+                    target_ids_str = line.strip().split(',')
+                    if not target_ids_str or not target_ids_str[0]: continue
+                    for target_str in target_ids_str:
+                        try:
                             target_id_orig = int(target_str)
-                            # Creamos una arista si el destino también es un nodo válido
                             if target_id_orig in self.id2idx:
                                 yield (source_idx, self.id2idx[target_id_orig])
-                    except (ValueError, KeyError):
-                        # Ignora líneas o partes mal formateadas
-                        continue
+                        except (ValueError, KeyError):
+                            continue
 
         logging.info("Iniciando pasada 2: Construyendo grafo desde el generador de aristas...")
         start_time = time.time()
         self.graph = ig.Graph(n=num_nodes, edges=edge_generator(), directed=True)
-        logging.info(f"Grafo construido en {time.time() - start_time:.2f}s.")
-        logging.info(f"Grafo final: {self.graph.vcount()} nodos, {self.graph.ecount()} aristas.")
+        logging.info(f"Grafo construido en {time.time() - start_time:.2f}s. ({self.graph.vcount()} nodos, {self.graph.ecount()} aristas).")
+        
+        logging.info("Simplificando grafo...")
         self.graph.simplify(multiple=True, loops=True)
-        logging.info(f"Grafo simplificado (eliminando duplicados y bucles): {self.graph.vcount()} nodos, {self.graph.ecount()} aristas.")
+        logging.info(f"Grafo simplificado: {self.graph.vcount()} nodos, {self.graph.ecount()} aristas.")
 
-    def run_build_pipeline(self):
-        """Ejecuta el pipeline completo de carga y construcción."""
+    def _add_attributes_to_graph_vectorized(self) -> None:
+        if self.locations is None:
+            logging.warning("No hay datos de ubicación. Se usarán coordenadas (0,0).")
+            self.graph.vs["original_id"] = self.idx2id
+            self.graph.vs["latitude"] = [0.0] * self.graph.vcount()
+            self.graph.vs["longitude"] = [0.0] * self.graph.vcount()
+            return
+        logging.info("Asignando atributos a nodos del grafo...")
+        start_time = time.time()
+        self.graph.vs["original_id"] = self.idx2id
+        original_ids_in_graph = np.array(self.idx2id, dtype=np.int32)
+        latitudes = np.zeros(self.graph.vcount(), dtype=np.float32)
+        longitudes = np.zeros(self.graph.vcount(), dtype=np.float32)
+        max_loc_id = self.locations.shape[0]
+        valid_mask = (original_ids_in_graph >= 1) & (original_ids_in_graph <= max_loc_id)
+        valid_original_ids = original_ids_in_graph[valid_mask]
+        valid_locations = self.locations[valid_original_ids - 1]
+        latitudes[valid_mask] = valid_locations[:, 0]
+        longitudes[valid_mask] = valid_locations[:, 1]
+        self.graph.vs["latitude"] = latitudes.tolist()
+        self.graph.vs["longitude"] = longitudes.tolist()
+        logging.info(f"Atributos asignados en {time.time() - start_time:.2f}s.")
+
+    def run_build_pipeline(self) -> None:
         self._load_locations()
         self._build_graph_two_pass()
         if self.graph:
-            self._add_attributes_to_graph()
+            self._add_attributes_to_graph_vectorized()
 
-    def _add_attributes_to_graph(self):
-        """Añade atributos de ID original y ubicación a los vértices del grafo."""
-        if self.locations is None:
-            logging.warning("No hay datos de ubicación para añadir al grafo. Se usarán coordenadas (0,0).")
-        
-        logging.info("Asignando atributos a los nodos del grafo...")
-        self.graph.vs["original_id"] = self.idx2id
-        
-        latitudes = np.zeros(self.graph.vcount(), dtype=np.float32)
-        longitudes = np.zeros(self.graph.vcount(), dtype=np.float32)
-        
-        # Mapeamos las ubicaciones a los nodos del grafo
-        # El archivo de ubicaciones corresponde a los usuarios 1, 2, 3...
-        # Su índice en el array `self.locations` es `id - 1`
-        for i, original_id in enumerate(self.idx2id):
-            # Comprobamos si el ID tiene una ubicación válida
-            if 1 <= original_id <= len(self.locations):
-                loc_idx = original_id - 1
-                latitudes[i] = self.locations[loc_idx, 0]
-                longitudes[i] = self.locations[loc_idx, 1]
-        
-        self.graph.vs["latitude"] = latitudes.tolist()
-        self.graph.vs["longitude"] = longitudes.tolist()
-        logging.info("Atributos de ID original y ubicación asignados.")
-
-
-    def analyze_basic_metrics(self):
-        """Realiza un análisis básico del grafo."""
-        if not self.graph: logging.warning("Grafo no disponible para análisis básico."); return
+    def analyze_basic_metrics(self) -> None:
+        if not self.graph: logging.warning("Grafo no disponible para análisis."); return
         logging.info("Realizando análisis básico del grafo...")
         start = time.time()
         num_nodes, num_edges = self.graph.vcount(), self.graph.ecount()
-        logging.info(f"Análisis - Nodos: {num_nodes}, Aristas: {num_edges}")
-        if num_nodes == 0: logging.warning("Grafo vacío, análisis detenido."); return
-        logging.info(f"Análisis - Densidad del grafo: {self.graph.density():.4e}")
-        components = self.graph.components(mode='weak')
-        logging.info(f"Análisis - Número de componentes conectados (débil): {len(components)}")
-        if len(components) > 0:
-            giant = components.giant()
-            logging.info(f"Análisis - Tamaño del componente conectado más grande: {giant.vcount()} nodos ({giant.vcount()/num_nodes*100:.2f}%)")
-        logging.info(f"Tiempo de análisis básico: {time.time() - start:.2f} segundos.")
+        if num_nodes == 0: logging.warning("Grafo vacío."); return
+        
+        logging.info(f"Análisis - Nodos: {num_nodes:,}, Aristas: {num_edges:,}")
+        logging.info(f"Análisis - Densidad: {self.graph.density():.4e}")
+        
+        wcc = self.graph.components(mode='weak')
+        logging.info(f"Análisis - Componentes débilmente conectados (WCC): {len(wcc):,}")
+        if wcc:
+            giant_wcc = wcc.giant()
+            logging.info(f"Análisis - WCC más grande: {giant_wcc.vcount():,} nodos ({giant_wcc.vcount()/num_nodes:.2%})")
 
-    def detect_communities(self, method='louvain'):
-        """Detecta comunidades usando un algoritmo especificado."""
+        scc = self.graph.components(mode='strong')
+        logging.info(f"Análisis - Componentes fuertemente conectados (SCC): {len(scc):,}")
+        if scc:
+            giant_scc = scc.giant()
+            logging.info(f"Análisis - SCC más grande: {giant_scc.vcount():,} nodos ({giant_scc.vcount()/num_nodes:.2%})")
+
+        logging.info(f"Tiempo de análisis básico: {time.time() - start:.2f}s.")
+
+    def analyze_degree_centrality(self, top_n: int = 10) -> None:
+        if not self.graph or not self.idx2id:
+            logging.warning("Grafo o mapeo de IDs no disponible."); return
+        
+        logging.info(f"Analizando los {top_n} nodos con mayor grado (in/out)...")
+        start_time = time.time()
+        if self.graph.vcount() == 0: return
+
+        in_degrees = np.array(self.graph.degree(mode='in'))
+        top_in_indices = np.argsort(in_degrees)[-top_n:]
+        logging.info("--- Nodos con mayor Grado de Entrada (Más 'Populares') ---")
+        for idx in reversed(top_in_indices):
+            logging.info(f"  - Usuario ID: {self.idx2id[idx]:<10} | Grado de Entrada: {in_degrees[idx]:,}")
+
+        out_degrees = np.array(self.graph.degree(mode='out'))
+        top_out_indices = np.argsort(out_degrees)[-top_n:]
+        logging.info("--- Nodos con mayor Grado de Salida (Más 'Activos') ---")
+        for idx in reversed(top_out_indices):
+            logging.info(f"  - Usuario ID: {self.idx2id[idx]:<10} | Grado de Salida: {out_degrees[idx]:,}")
+            
+        logging.info(f"Análisis de grado completado en {time.time() - start_time:.2f}s.")
+
+    def detect_communities(self, method: str = 'louvain') -> None:
         if not self.graph: logging.error("El grafo no está construido."); return
-        logging.info(f"Iniciando detección de comunidades con el método '{method}'...")
+        logging.info(f"Iniciando detección de comunidades con '{method}'...")
         start_time = time.time()
         g_undirected = self.graph.as_undirected(mode='collapse')
-        if method == 'louvain':
-            self.communities = g_undirected.community_multilevel()
-        else:
-            logging.error(f"Método de detección de comunidades '{method}' no reconocido. Use 'louvain'.")
-            return
+        self.communities = g_undirected.community_multilevel()
         self.graph.vs["community"] = self.communities.membership
         elapsed = time.time() - start_time
-        logging.info(f"Detección de comunidades completada en {elapsed:.2f}s. "
-                     f"Comunidades: {len(self.communities)}, Modularidad: {self.communities.modularity:.4f}")
+        logging.info(f"Comunidades detectadas en {elapsed:.2f}s. Comunidades: {len(self.communities)}, Modularidad: {self.communities.modularity:.4f}")
 
-    def analyze_shortest_path(self, sample_size=1000):
-        """
-        Estima la longitud promedio del camino más corto de forma SECUENCIAL y con uso de memoria optimizado.
-        Este método es más lento que el paralelo pero consume significativamente menos memoria.
-        """
-        if not self.graph:
-            logging.error("El grafo no está construido."); return
-
-        logging.info(f"Estimando (en SECUENCIAL y con memoria optimizada) la longitud promedio del camino más corto con una muestra de {sample_size} nodos...")
+    def analyze_shortest_path_native(self, sample_size: int = 2000) -> Optional[float]:
+        if not self.graph: logging.error("El grafo no está construido."); return None
+        logging.info(f"Estimando longitud de camino promedio con muestra de {sample_size}...")
         start_time = time.time()
-        components = self.graph.components(mode='weak')
-        giant = components.giant()
-        if giant.vcount() < 2:
-            logging.warning("El componente gigante es demasiado pequeño para el análisis."); return
+        
+        giant = self.graph.components(mode='weak').giant()
+        if giant.vcount() < 2: logging.warning("Componente gigante muy pequeño."); return None
         if giant.vcount() < sample_size:
             sample_size = giant.vcount()
-            logging.warning(f"Tamaño de la muestra reducido a {sample_size} (tamaño del componente gigante).")
+            logging.warning(f"Tamaño de la muestra reducido a {sample_size}.")
 
         sampled_vertices_indices = np.random.choice(giant.vcount(), size=sample_size, replace=False)
-        
-        ## CAMBIO: En lugar de una lista, usamos un acumulador para la suma y otro para el conteo.
-        total_path_lengths_sum = 0.0
-        total_paths_count = 0
+        total_path_lengths_sum, total_paths_count = 0.0, 0
 
-        logging.info("Iniciando bucle de cálculo secuencial...")
-
+        logging.info("Iniciando bucle de cálculo de distancias ...")
         for i, v_idx in enumerate(sampled_vertices_indices):
-            # Esta línea sigue consumiendo memoria temporalmente, pero se libera en cada iteración.
             paths_from_v = giant.distances(source=v_idx)[0]
-            
-            ## CAMBIO: Iteramos sobre los caminos y actualizamos los acumuladores en lugar de guardar los caminos en una lista.
-            # Esto evita el MemoryError.
             for p in paths_from_v:
                 if p != float('inf') and p > 0:
                     total_path_lengths_sum += p
                     total_paths_count += 1
-            
-            if (i + 1) % 100 == 0:
-                elapsed_min = (time.time() - start_time) / 60
-                logging.info(f"  ... procesados {i + 1}/{sample_size} nodos de muestra. (Tiempo transcurrido: {elapsed_min:.2f} min)")
+            if (i + 1) % 500 == 0:
+                logging.info(f"  ... procesados {i + 1}/{sample_size} nodos de muestra.")
 
-        ## CAMBIO: Calculamos el promedio usando la suma y el conteo.
-        average_path_length = total_path_lengths_sum / total_paths_count if total_paths_count > 0 else float('inf')
-        
+        if total_paths_count == 0: return float('inf')
+        average_path_length = total_path_lengths_sum / total_paths_count
         elapsed = time.time() - start_time
-        logging.info(f"Estimación secuencial completada en {elapsed:.2f}s.")
-        logging.info(f"  - Longitud promedio estimada del camino más corto: {average_path_length:.4f}")
+        logging.info(f"Estimación de camino promedio completada en {elapsed:.2f}s.")
+        logging.info(f"  - Longitud promedio estimada: {average_path_length:.4f}")
         return average_path_length
-    
-    def calculate_mst_on_distance(self):
-        """Calcula el Árbol de Expansión Mínima (MST) basado en la distancia geográfica."""
+
+    def calculate_mst_on_distance_vectorized(self) -> Optional[Tuple[ig.Graph, float]]:
         if not self.graph or "latitude" not in self.graph.vs.attributes():
-            logging.error("Grafo o atributos de ubicación no disponibles para calcular el MST."); return
-        logging.info("Iniciando cálculo del Árbol de Expansión Mínima (MST) basado en distancia.")
+            logging.error("Grafo o atributos de ubicación no disponibles."); return None
+        
+        logging.info("Calculando MST...")
         start_time = time.time()
         
-        # El MST solo tiene sentido en un grafo no dirigido
         g_undirected = self.graph.as_undirected(mode='collapse')
+        giant = g_undirected.components(mode='weak').giant()
+        if giant.vcount() < 2: logging.warning("Componente gigante muy pequeño para calcular MST."); return None
         
-        giant_comp = g_undirected.components(mode='weak').giant()
-        if giant_comp.vcount() < 2:
-            logging.warning("Componente gigante demasiado pequeño para calcular MST."); return
+        edges = np.array(giant.get_edgelist(), dtype=np.int32)
         
-        logging.info(f"Calculando MST en el componente gigante ({giant_comp.vcount()} nodos).")
-        weights = [
-            haversine_distance(
-                giant_comp.vs[e.source]["latitude"], giant_comp.vs[e.source]["longitude"],
-                giant_comp.vs[e.target]["latitude"], giant_comp.vs[e.target]["longitude"]
-            ) for e in giant_comp.es
-        ]
-        
-        giant_comp.es["weight"] = weights
-        logging.info("Calculando MST con algoritmo optimizado de igraph...")
-        mst = giant_comp.spanning_tree(weights=giant_comp.es["weight"], return_tree=True)
+        lats = giant.vs["latitude"]
+        lons = giant.vs["longitude"]
+        coords = np.column_stack((lats, lons)).astype(np.float32)
+
+        lat1, lon1 = coords[edges[:, 0], 0], coords[edges[:, 0], 1]
+        lat2, lon2 = coords[edges[:, 1], 0], coords[edges[:, 1], 1]
+        weights = haversine_vectorized(lat1, lon1, lat2, lon2)
+        giant.es["weight"] = weights
+        mst = giant.spanning_tree(weights="weight", return_tree=True)
         total_mst_length = sum(mst.es["weight"])
+
+        logging.info(f"Guardando grafo del MST en {MST_PKL_FILE}...")
+        mst.write_pickle(MST_PKL_FILE)
+        
         elapsed = time.time() - start_time
-        logging.info(f"Cálculo del MST completado en {elapsed:.2f}s.")
-        logging.info(f"  - Longitud total del MST (suma de distancias en km): {total_mst_length:,.2f} km")
+        logging.info(f"Cálculo de MST completado en {elapsed:.2f}s.")
+        logging.info(f"  - Longitud total del MST: {total_mst_length:,.2f} km")
         return mst, total_mst_length
 
-    def save_data(self):
-        """Guarda todos los artefactos procesados en archivos."""
+    def save_data(self) -> None:
+        logging.info("Iniciando guardado de datos procesados...")
         if self.graph:
-            logging.info(f"Guardando grafo en {GRAPH_PKL_FILE}...")
-            with open(GRAPH_PKL_FILE, 'wb') as f: pickle.dump(self.graph, f, protocol=pickle.HIGHEST_PROTOCOL)
+            logging.info(f"Guardando grafo principal en {GRAPH_PKL_FILE}...")
+            self.graph.write_pickle(GRAPH_PKL_FILE)
         if self.id2idx and self.idx2id:
             logging.info(f"Guardando mapeos de ID en {ID_MAP_PKL_FILE}...")
-            with open(ID_MAP_PKL_FILE, 'wb') as f: pickle.dump({'id2idx': self.id2idx, 'idx2id': self.idx2id}, f, protocol=pickle.HIGHEST_PROTOCOL)
+            with open(ID_MAP_PKL_FILE, 'wb') as f: pickle.dump({'id2idx': self.id2idx, 'idx2id': self.idx2id}, f)
         if self.locations is not None:
              logging.info(f"Guardando array de ubicaciones en {LOCATIONS_NPY_FILE}...")
              np.save(LOCATIONS_NPY_FILE, self.locations)
         if self.communities:
             logging.info(f"Guardando resultados de comunidades en {COMMUNITIES_PKL_FILE}...")
-            # Guardamos la membresía como una lista simple para mayor compatibilidad
-            membership_list = self.communities.membership
-            with open(COMMUNITIES_PKL_FILE, 'wb') as f: pickle.dump(membership_list, f, protocol=pickle.HIGHEST_PROTOCOL)
+            with open(COMMUNITIES_PKL_FILE, 'wb') as f: pickle.dump(self.communities, f)
         logging.info("Todos los datos procesados han sido guardados.")
 
-    def get_followed_users(self, user_id):
-        """Devuelve una lista de los IDs de los usuarios seguidos por el usuario dado."""
-        if not self.graph or not self.id2idx:
-            logging.error("El grafo o los mapeos de ID no están disponibles."); return []
-        if user_id not in self.id2idx:
-            logging.warning(f"El usuario con ID {user_id} no se encuentra en el grafo."); return []
-        vertex_idx = self.id2idx[user_id]
-        followed_indices = self.graph.successors(vertex_idx)
-        return [self.idx2id[idx] for idx in followed_indices]
-
-# --- Punto de Entrada del Script ---
 if __name__ == "__main__":
     if not all(os.path.exists(f) for f in [LOCATION_TXT_FILE, USER_TXT_FILE]):
-        logging.critical(f"Error: No se encontraron los archivos de entrada. Revisa las rutas:\n  {LOCATION_TXT_FILE}\n  {USER_TXT_FILE}")
+        logging.critical(f"Error: No se encontraron los archivos de entrada.")
     else:
         processor = GraphProcessor(USER_TXT_FILE, LOCATION_TXT_FILE)
+        main_start_time = time.time()
+        
         processor.run_build_pipeline()
 
         if processor.graph:
             processor.analyze_basic_metrics()
+            processor.analyze_degree_centrality(top_n=10)
             processor.detect_communities(method='louvain')
-            
-            # Llamada a la función SECUENCIAL para el análisis de caminos
-            processor.analyze_shortest_path(sample_size=1000)
-            
-            processor.calculate_mst_on_distance()
+            processor.analyze_shortest_path_native(sample_size=2000)
+            processor.calculate_mst_on_distance_vectorized()
             processor.save_data()
-
-            #Demostración de la función de consulta
-            logging.info("--- EJEMPLO DE USO DE get_followed_users ---")
-            test_user_id = processor.idx2id[710]
-            logging.info(f"Buscando a quién sigue el usuario con ID original: {test_user_id}...")
-            followed_users_list = processor.get_followed_users(test_user_id)
-            if followed_users_list:
-                logging.info(f"El usuario {test_user_id} sigue a {len(followed_users_list)} usuarios. Primeros seguidos: {followed_users_list[:15]}")
-            else:
-                logging.info(f"El usuario {test_user_id} no sigue a nadie.")
-        
-
-            logging.info("--- ANÁLISIS COMPLETADO EXITOSAMENTE ---")
+            
+            total_time = time.time() - main_start_time
+            logging.info(f"--- ANÁLISIS COMPLETADO en {total_time/60:.2f} minutos ---")
         else:
             logging.critical("La construcción del grafo falló. El script terminará.")
