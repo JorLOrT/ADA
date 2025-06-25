@@ -10,7 +10,7 @@ from collections import defaultdict
 import community_louvain as community
 import json
 
-USER_TXT_FILE = './dataset/1_million_user.txt'
+USER_TXT_FILE = './dataset/10_million_user.txt'
 OUTPUT_DIR = './processed_data' 
 GRAPH_IGRAPH_FILE = os.path.join(OUTPUT_DIR, "social_network_graph.igraph.pkl")
 IDX2ID_PKL_FILE = os.path.join(OUTPUT_DIR, "social_network_idx2id.pkl")

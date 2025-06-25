@@ -1,5 +1,3 @@
-# graph_builder.py (Versión final y robusta)
-
 import numpy as np
 import igraph as ig
 import time
@@ -9,8 +7,8 @@ import pickle
 from math import radians, sin, cos, sqrt, atan2
 
 NUM_USERS = 10_000_000
-LOCATION_TXT_FILE = './dataset/1_million_location.txt'
-USER_TXT_FILE = './dataset/1_million_user.txt'
+LOCATION_TXT_FILE = './dataset/10_million_location.txt'
+USER_TXT_FILE = './dataset/10_million_user.txt'
 OUTPUT_DIR = './processed_data'
 
 os.makedirs(OUTPUT_DIR, exist_ok=True)
