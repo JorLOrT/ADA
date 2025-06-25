@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-This module implements community detection.
+Este módulo implementa la detección de comunidades.
 """
 from __future__ import print_function
 
@@ -16,9 +16,9 @@ import numpy as np
 
 class Status(object):
     """
-    To handle several data in one struct.
+    Para manejar varios datos en una sola estructura.
 
-    Could be replaced by named tuple, but don't want to depend on python 2.6
+    Podría ser reemplazado por named tuple, pero no se quiere depender de python 2.6
     """
     node2com = {}
     total_weight = 0
@@ -40,7 +40,7 @@ class Status(object):
                 + " total_weight : " + str(self.total_weight))
 
     def copy(self):
-        """Perform a deep copy of status"""
+        """Realiza una copia profunda del status"""
         new_status = Status()
         new_status.node2com = self.node2com.copy()
         new_status.internals = self.internals.copy()
@@ -49,7 +49,7 @@ class Status(object):
         new_status.total_weight = self.total_weight
 
     def init(self, graph, weight, part=None):
-        """Initialize the status of a graph with every node in one community"""
+        """Inicializa el status de un grafo con cada nodo en una comunidad"""
         count = 0
         self.node2com = dict([])
         self.total_weight = 0
@@ -62,7 +62,7 @@ class Status(object):
                 self.node2com[node] = count
                 deg = float(graph.degree(node, weight=weight))
                 if deg < 0:
-                    error = "Bad node degree ({})".format(deg)
+                    error = "Grado de nodo incorrecto ({})".format(deg)
                     raise ValueError(error)
                 self.degrees[count] = deg
                 self.gdegrees[node] = deg
@@ -81,7 +81,7 @@ class Status(object):
                 for neighbor, datas in graph[node].items():
                     edge_weight = datas.get(weight, 1)
                     if edge_weight <= 0:
-                        error = "Bad graph type ({})".format(type(graph))
+                        error = "Tipo de grafo incorrecto ({})".format(type(graph))
                         raise ValueError(error)
                     if part[neighbor] == com:
                         if neighbor == node:
@@ -93,24 +93,23 @@ class Status(object):
 __author__ = """Thomas Aynaud (thomas.aynaud@lip6.fr)"""
 #    Copyright (C) 2009 by
 #    Thomas Aynaud <thomas.aynaud@lip6.fr>
-#    All rights reserved.
-#    BSD license.
+#    Todos los derechos reservados.
+#    Licencia BSD.
 
 __PASS_MAX = -1
 __MIN = 0.0000001
 
 
 def check_random_state(seed):
-    """Turn seed into a np.random.RandomState instance.
+    """Convierte seed en una instancia de np.random.RandomState.
 
-    Parameters
+    Parámetros
     ----------
-    seed : None | int | instance of RandomState
-        If seed is None, return the RandomState singleton used by np.random.
-        If seed is an int, return a new RandomState instance seeded with seed.
-        If seed is already a RandomState instance, return it.
-        Otherwise raise ValueError.
-
+    seed : None | int | instancia de RandomState
+        Si seed es None, retorna el singleton RandomState usado por np.random.
+        Si seed es un int, retorna una nueva instancia RandomState con esa semilla.
+        Si seed ya es una instancia de RandomState, la retorna.
+        De lo contrario, lanza ValueError.
     """
     if seed is None or seed is np.random:
         return np.random.mtrand._rand
@@ -118,43 +117,42 @@ def check_random_state(seed):
         return np.random.RandomState(seed)
     if isinstance(seed, np.random.RandomState):
         return seed
-    raise ValueError("%r cannot be used to seed a numpy.random.RandomState"
-                     " instance" % seed)
+    raise ValueError("%r no puede ser usado para inicializar un numpy.random.RandomState" % seed)
 
 
 def partition_at_level(dendrogram, level):
-    """Return the partition of the nodes at the given level
+    """Retorna la partición de los nodos en el nivel dado
 
-    A dendrogram is a tree and each level is a partition of the graph nodes.
-    Level 0 is the first partition, which contains the smallest communities,
-    and the best is len(dendrogram) - 1.
-    The higher the level is, the bigger are the communities
+    Un dendrograma es un árbol y cada nivel es una partición de los nodos del grafo.
+    El nivel 0 es la primera partición, que contiene las comunidades más pequeñas,
+    y la mejor es len(dendrogram) - 1.
+    Cuanto mayor es el nivel, más grandes son las comunidades
 
-    Parameters
+    Parámetros
     ----------
-    dendrogram : list of dict
-       a list of partitions, ie dictionnaries where keys of the i+1 are the
-       values of the i.
+    dendrogram : lista de dict
+       una lista de particiones, es decir, diccionarios donde las claves de i+1 son los
+       valores de i.
     level : int
-       the level which belongs to [0..len(dendrogram)-1]
+       el nivel que pertenece a [0..len(dendrogram)-1]
 
-    Returns
+    Retorna
     -------
-    partition : dictionnary
-       A dictionary where keys are the nodes and the values are the set it
-       belongs to
+    partition : diccionario
+       Un diccionario donde las claves son los nodos y los valores el conjunto al que
+       pertenecen
 
-    Raises
-    ------
+    Lanza
+    ----
     KeyError
-       If the dendrogram is not well formed or the level is too high
+       Si el dendrograma no está bien formado o el nivel es muy alto
 
-    See Also
-    --------
-    best_partition : which directly combines partition_at_level and
-    generate_dendrogram : to obtain the partition of highest modularity
+    Ver también
+    -----------
+    best_partition : que combina directamente partition_at_level y
+    generate_dendrogram : para obtener la partición de mayor modularidad
 
-    Examples
+    Ejemplos
     --------
     >>> G=nx.erdos_renyi_graph(100, 0.01)
     >>> dendrogram = generate_dendrogram(G)
@@ -169,39 +167,38 @@ def partition_at_level(dendrogram, level):
 
 
 def modularity(partition, graph, weight='weight'):
-    """Compute the modularity of a partition of a graph
+    """Calcula la modularidad de una partición de un grafo
 
-    Parameters
+    Parámetros
     ----------
     partition : dict
-       the partition of the nodes, i.e a dictionary where keys are their nodes
-       and values the communities
+       la partición de los nodos, es decir, un diccionario donde las claves son los nodos
+       y los valores las comunidades
     graph : networkx.Graph
-       the networkx graph which is decomposed
-    weight : str, optional
-        the key in graph to use as weight. Default to 'weight'
+       el grafo de networkx que se descompone
+    weight : str, opcional
+        la clave en el grafo a usar como peso. Por defecto 'weight'
 
-
-    Returns
+    Retorna
     -------
     modularity : float
-       The modularity
+       La modularidad
 
-    Raises
+    Lanza
     ------
     KeyError
-       If the partition is not a partition of all graph nodes
+       Si la partición no es una partición de todos los nodos del grafo
     ValueError
-        If the graph has no link
+        Si el grafo no tiene enlaces
     TypeError
-        If graph is not a networkx.Graph
+        Si el grafo no es un networkx.Graph
 
-    References
+    Referencias
     ----------
     .. 1. Newman, M.E.J. & Girvan, M. Finding and evaluating community
     structure in networks. Physical Review E 69, 26113(2004).
 
-    Examples
+    Ejemplos
     --------
     >>> import community as community_louvain
     >>> import networkx as nx
@@ -210,13 +207,13 @@ def modularity(partition, graph, weight='weight'):
     >>> modularity(partition, G)
     """
     if graph.is_directed():
-        raise TypeError("Bad graph type, use only non directed graph")
+        raise TypeError("Tipo de grafo incorrecto, use solo grafos no dirigidos")
 
     inc = dict([])
     deg = dict([])
     links = graph.size(weight=weight)
     if links == 0:
-        raise ValueError("A graph without link has an undefined modularity")
+        raise ValueError("Un grafo sin enlaces tiene una modularidad indefinida")
 
     for node in graph:
         com = partition[node]
@@ -242,80 +239,80 @@ def best_partition(graph,
                    resolution=1.,
                    randomize=None,
                    random_state=None):
-    """Compute the partition of the graph nodes which maximises the modularity
-    (or try..) using the Louvain heuristices
+    """Calcula la partición de los nodos del grafo que maximiza la modularidad
+    (o lo intenta...) usando la heurística de Louvain
 
-    This is the partition of highest modularity, i.e. the highest partition
-    of the dendrogram generated by the Louvain algorithm.
+    Esta es la partición de mayor modularidad, es decir, la partición más alta
+    del dendrograma generado por el algoritmo de Louvain.
 
-    Parameters
+    Parámetros
     ----------
     graph : networkx.Graph
-       the networkx graph which is decomposed
-    partition : dict, optional
-       the algorithm will start using this partition of the nodes.
-       It's a dictionary where keys are their nodes and values the communities
-    weight : str, optional
-        the key in graph to use as weight. Default to 'weight'
-    resolution :  double, optional
-        Will change the size of the communities, default to 1.
-        represents the time described in
+       el grafo de networkx que se descompone
+    partition : dict, opcional
+       el algoritmo comenzará usando esta partición de los nodos.
+       Es un diccionario donde las claves son los nodos y los valores las comunidades
+    weight : str, opcional
+        la clave en el grafo a usar como peso. Por defecto 'weight'
+    resolution :  double, opcional
+        Cambia el tamaño de las comunidades, por defecto 1.
+        representa el tiempo descrito en
         "Laplacian Dynamics and Multiscale Modular Structure in Networks",
         R. Lambiotte, J.-C. Delvenne, M. Barahona
-    randomize : boolean, optional
-        Will randomize the node evaluation order and the community evaluation
-        order to get different partitions at each call
-    random_state : int, RandomState instance or None, optional (default=None)
-        If int, random_state is the seed used by the random number generator;
-        If RandomState instance, random_state is the random number generator;
-        If None, the random number generator is the RandomState instance used
-        by `np.random`.
+    randomize : booleano, opcional
+        Aleatoriza el orden de evaluación de nodos y comunidades para obtener
+        diferentes particiones en cada llamada
+    random_state : int, instancia de RandomState o None, opcional (por defecto=None)
+        Si es int, random_state es la semilla usada por el generador de números aleatorios;
+        Si es instancia de RandomState, random_state es el generador de números aleatorios;
+        Si es None, el generador de números aleatorios es la instancia RandomState usada
+        por `np.random`.
 
-    Returns
+    Retorna
     -------
-    partition : dictionnary
-       The partition, with communities numbered from 0 to number of communities
+    partition : diccionario
+       La partición, con comunidades numeradas de 0 al número de comunidades
 
-    Raises
+    Lanza
     ------
     NetworkXError
-       If the graph is not undirected.
+       Si el grafo no es no dirigido.
 
-    See Also
-    --------
-    generate_dendrogram : to obtain all the decompositions levels
+    Ver también
+    -----------
+    generate_dendrogram : para obtener todos los niveles de descomposición
 
-    Notes
+    Notas
     -----
-    Uses Louvain algorithm
+    Usa el algoritmo de Louvain
 
-    References
+    Referencias
     ----------
     .. 1. Blondel, V.D. et al. Fast unfolding of communities in
     large networks. J. Stat. Mech 10008, 1-12(2008).
 
-    Examples
+    Ejemplos
     --------
-    >>> # basic usage
+    >>> # uso básico
     >>> import community as community_louvain
     >>> import networkx as nx
     >>> G = nx.erdos_renyi_graph(100, 0.01)
     >>> partion = community_louvain.best_partition(G)
 
-    >>> # display a graph with its communities:
-    >>> # as Erdos-Renyi graphs don't have true community structure,
-    >>> # instead load the karate club graph
+    >>> # mostrar un grafo con sus comunidades:
+    >>> # como los grafos Erdos-Renyi no tienen estructura real de comunidad,
+    >>> # en su lugar carga el grafo del club de karate
     >>> import community as community_louvain
     >>> import matplotlib.cm as cm
     >>> import matplotlib.pyplot as plt
     >>> import networkx as nx
     >>> G = nx.karate_club_graph()
-    >>> # compute the best partition
+    >>> # calcula la mejor partición
     >>> partition = community_louvain.best_partition(G)
 
-    >>> # draw the graph
+    >>> # dibuja el grafo
     >>> pos = nx.spring_layout(G)
-    >>> # color the nodes according to their partition
+    >>> # colorea los nodos según su partición
     >>> cmap = cm.get_cmap('viridis', max(partition.values()) + 1)
     >>> nx.draw_networkx_nodes(G, pos, partition.keys(), node_size=40,
     >>>                        cmap=cmap, node_color=list(partition.values()))
@@ -330,6 +327,49 @@ def best_partition(graph,
                                 random_state)
     return partition_at_level(dendo, len(dendo) - 1)
 
+def export_communities_html(communities, output_file="3_community.html"):
+    """
+    Genera una vista HTML simple mostrando las comunidades detectadas.
+    communities: dict {id_comunidad: [lista de nodos]}
+    output_file: nombre del archivo HTML de salida
+    """
+    html = """
+    <!DOCTYPE html>
+    <html lang="es">
+    <head>
+        <meta charset="UTF-8">
+        <title>Comunidades Detectadas</title>
+        <style>
+            body { font-family: Arial, sans-serif; background: #f4f6fa; color: #222; }
+            h1 { color: #2c3e50; }
+            table { border-collapse: collapse; width: 60%; margin: 30px auto; background: #fff; }
+            th, td { border: 1px solid #ddd; padding: 8px; text-align: center; }
+            th { background: #3498db; color: #fff; }
+            tr:nth-child(even) { background: #f2f2f2; }
+        </style>
+    </head>
+    <body>
+        <h1 style="text-align:center;">Comunidades Detectadas</h1>
+        <table>
+            <tr>
+                <th>ID Comunidad</th>
+                <th>Tamaño</th>
+            </tr>
+    """
+
+    for comm_id, nodes in communities.items():
+        html += f"<tr><td>{comm_id}</td><td>{len(nodes)}</td></tr>\n"
+
+    html += """
+        </table>
+        <p style="text-align:center;">Total de comunidades: <b>{}</b></p>
+    </body>
+    </html>
+    """.format(len(communities))
+
+    with open(output_file, "w", encoding="utf-8") as f:
+        f.write(html)
+    print(f"Vista HTML de comunidades exportada a {output_file}")
 
 def generate_dendrogram(graph,
                         part_init=None,
@@ -337,54 +377,53 @@ def generate_dendrogram(graph,
                         resolution=1.,
                         randomize=None,
                         random_state=None):
-    """Find communities in the graph and return the associated dendrogram
+    """Encuentra comunidades en el grafo y retorna el dendrograma asociado
 
-    A dendrogram is a tree and each level is a partition of the graph nodes.
-    Level 0 is the first partition, which contains the smallest communities,
-    and the best is len(dendrogram) - 1. The higher the level is, the bigger
-    are the communities
+    Un dendrograma es un árbol y cada nivel es una partición de los nodos del grafo.
+    El nivel 0 es la primera partición, que contiene las comunidades más pequeñas,
+    y la mejor es len(dendrogram) - 1. Cuanto mayor es el nivel, más grandes
+    son las comunidades
 
-
-    Parameters
+    Parámetros
     ----------
     graph : networkx.Graph
-        the networkx graph which will be decomposed
-    part_init : dict, optional
-        the algorithm will start using this partition of the nodes. It's a
-        dictionary where keys are their nodes and values the communities
-    weight : str, optional
-        the key in graph to use as weight. Default to 'weight'
-    resolution :  double, optional
-        Will change the size of the communities, default to 1.
-        represents the time described in
+        el grafo de networkx que será descompuesto
+    part_init : dict, opcional
+        el algoritmo comenzará usando esta partición de los nodos. Es un
+        diccionario donde las claves son los nodos y los valores las comunidades
+    weight : str, opcional
+        la clave en el grafo a usar como peso. Por defecto 'weight'
+    resolution :  double, opcional
+        Cambia el tamaño de las comunidades, por defecto 1.
+        representa el tiempo descrito en
         "Laplacian Dynamics and Multiscale Modular Structure in Networks",
         R. Lambiotte, J.-C. Delvenne, M. Barahona
 
-    Returns
+    Retorna
     -------
-    dendrogram : list of dictionaries
-        a list of partitions, ie dictionnaries where keys of the i+1 are the
-        values of the i. and where keys of the first are the nodes of graph
+    dendrogram : lista de diccionarios
+        una lista de particiones, es decir, diccionarios donde las claves de i+1 son los
+        valores de i. y donde las claves del primero son los nodos del grafo
 
-    Raises
+    Lanza
     ------
     TypeError
-        If the graph is not a networkx.Graph
+        Si el grafo no es un networkx.Graph
 
-    See Also
-    --------
+    Ver también
+    -----------
     best_partition
 
-    Notes
+    Notas
     -----
-    Uses Louvain algorithm
+    Usa el algoritmo de Louvain
 
-    References
+    Referencias
     ----------
     .. 1. Blondel, V.D. et al. Fast unfolding of communities in large
     networks. J. Stat. Mech 10008, 1-12(2008).
 
-    Examples
+    Ejemplos
     --------
     >>> G=nx.erdos_renyi_graph(100, 0.01)
     >>> dendo = generate_dendrogram(G)
@@ -395,26 +434,24 @@ def generate_dendrogram(graph,
     :type weight:
     """
     if graph.is_directed():
-        raise TypeError("Bad graph type, use only non directed graph")
+        raise TypeError("Tipo de grafo incorrecto, use solo grafos no dirigidos")
 
-    # Properly handle random state, eventually remove old `randomize` parameter
-    # NOTE: when `randomize` is removed, delete code up to random_state = ...
+    # Manejo adecuado del estado aleatorio, eventualmente eliminar el viejo parámetro `randomize`
+    # NOTA: cuando se elimine `randomize`, eliminar el código hasta random_state = ...
     if randomize is not None:
-        warnings.warn("The `randomize` parameter will be deprecated in future "
-                      "versions. Use `random_state` instead.", DeprecationWarning)
-        # If shouldn't randomize, we set a fixed seed to get determinisitc results
+        warnings.warn("El parámetro `randomize` será deprecado en futuras versiones. Usa `random_state` en su lugar.", DeprecationWarning)
+        # Si no se debe aleatorizar, se fija una semilla para obtener resultados deterministas
         if randomize is False:
             random_state = 0
 
-    # We don't know what to do if both `randomize` and `random_state` are defined
+    # No se sabe qué hacer si ambos `randomize` y `random_state` están definidos
     if randomize and random_state is not None:
-        raise ValueError("`randomize` and `random_state` cannot be used at the "
-                         "same time")
+        raise ValueError("`randomize` y `random_state` no pueden usarse al mismo tiempo")
 
     random_state = check_random_state(random_state)
 
-    # special case, when there is no link
-    # the best partition is everyone in its community
+    # caso especial, cuando no hay enlaces
+    # la mejor partición es cada uno en su comunidad
     if graph.number_of_edges() == 0:
         part = dict([])
         for i, node in enumerate(graph.nodes()):
@@ -447,28 +484,27 @@ def generate_dendrogram(graph,
 
 
 def induced_graph(partition, graph, weight="weight"):
-    """Produce the graph where nodes are the communities
+    """Produce el grafo donde los nodos son las comunidades
 
-    there is a link of weight w between communities if the sum of the weights
-    of the links between their elements is w
+    hay un enlace de peso w entre comunidades si la suma de los pesos
+    de los enlaces entre sus elementos es w
 
-    Parameters
+    Parámetros
     ----------
     partition : dict
-       a dictionary where keys are graph nodes and  values the part the node
-       belongs to
+       un diccionario donde las claves son los nodos del grafo y los valores la parte a la que
+       pertenece el nodo
     graph : networkx.Graph
-        the initial graph
-    weight : str, optional
-        the key in graph to use as weight. Default to 'weight'
+        el grafo inicial
+    weight : str, opcional
+        la clave en el grafo a usar como peso. Por defecto 'weight'
 
-
-    Returns
+    Retorna
     -------
     g : networkx.Graph
-       a networkx graph where nodes are the parts
+       un grafo de networkx donde los nodos son las partes
 
-    Examples
+    Ejemplos
     --------
     >>> n = 5
     >>> g = nx.complete_graph(2*n)
@@ -495,19 +531,18 @@ def induced_graph(partition, graph, weight="weight"):
 
 
 def __renumber(dictionary):
-    """Renumber the values of the dictionary from 0 to n
-    """
+    """Renumera los valores del diccionario de 0 a n"""
     values = set(dictionary.values())
     target = set(range(len(values)))
 
     if values == target:
-        # no renumbering necessary
+        # no es necesario renumerar
         ret = dictionary.copy()
     else:
-        # add the values that won't be renumbered
+        # agrega los valores que no serán renumerados
         renumbering = dict(zip(target.intersection(values),
                                target.intersection(values)))
-        # add the values that will be renumbered
+        # agrega los valores que serán renumerados
         renumbering.update(dict(zip(values.difference(target),
                                     target.difference(values))))
         ret = {k: renumbering[v] for k, v in dictionary.items()}
@@ -516,8 +551,7 @@ def __renumber(dictionary):
 
 
 def load_binary(data):
-    """Load binary graph as used by the cpp implementation of this algorithm
-    """
+    """Carga un grafo binario como el usado por la implementación en cpp de este algoritmo"""
     data = open(data, "rb")
 
     reader = array.array("I")
@@ -544,8 +578,7 @@ def load_binary(data):
 
 
 def __one_level(graph, status, weight_key, resolution, random_state):
-    """Compute one level of communities
-    """
+    """Calcula un nivel de comunidades"""
     modified = True
     nb_pass_done = 0
     cur_mod = __modularity(status, resolution)
@@ -583,8 +616,8 @@ def __one_level(graph, status, weight_key, resolution, random_state):
 
 def __neighcom(node, graph, status, weight_key):
     """
-    Compute the communities in the neighborhood of node in the graph given
-    with the decomposition node2com
+    Calcula las comunidades en el vecindario de un nodo en el grafo dado
+    con la descomposición node2com
     """
     weights = {}
     for neighbor, datas in graph[node].items():
@@ -597,7 +630,7 @@ def __neighcom(node, graph, status, weight_key):
 
 
 def __remove(node, com, weight, status):
-    """ Remove node from community com and modify status"""
+    """ Quita el nodo de la comunidad com y modifica el status"""
     status.degrees[com] = (status.degrees.get(com, 0.)
                            - status.gdegrees.get(node, 0.))
     status.internals[com] = float(status.internals.get(com, 0.) -
@@ -606,7 +639,7 @@ def __remove(node, com, weight, status):
 
 
 def __insert(node, com, weight, status):
-    """ Insert node into community and modify status"""
+    """ Inserta el nodo en la comunidad y modifica el status"""
     status.node2com[node] = com
     status.degrees[com] = (status.degrees.get(com, 0.) +
                            status.gdegrees.get(node, 0.))
@@ -616,8 +649,8 @@ def __insert(node, com, weight, status):
 
 def __modularity(status, resolution):
     """
-    Fast compute the modularity of the partition of the graph using
-    status precomputed
+    Calcula rápidamente la modularidad de la partición del grafo usando
+    el status precomputado
     """
     links = float(status.total_weight)
     result = 0.
@@ -630,7 +663,7 @@ def __modularity(status, resolution):
 
 
 def __randomize(items, random_state):
-    """Returns a List containing a random permutation of items"""
+    """Retorna una lista con una permutación aleatoria de items"""
     randomized_items = list(items)
     random_state.shuffle(randomized_items)
     return randomized_items

@@ -6,6 +6,9 @@ import logging
 import pickle
 from math import radians, sin, cos, sqrt, atan2
 
+# =========================================================
+# CONFIGURACIÓN Y CONSTANTES
+# =========================================================
 NUM_USERS = 10_000_000
 LOCATION_TXT_FILE = './dataset/10_million_location.txt'
 USER_TXT_FILE = './dataset/10_million_user.txt'
@@ -24,8 +27,14 @@ logging.basicConfig(level=logging.INFO,
                     handlers=[logging.FileHandler(LOG_FILE, mode='w'),
                               logging.StreamHandler()])
 
+# =========================================================
+# FUNCIONES AUXILIARES
+# =========================================================
 def haversine(coord1, coord2):
-    """Calcula la distancia Haversine entre dos puntos (lat, lon)."""
+    """
+    Calcula la distancia Haversine entre dos puntos (lat, lon).
+    Devuelve la distancia en kilómetros.
+    """
     R = 6371.0 
     lat1, lon1 = coord1
     lat2, lon2 = coord2
@@ -44,8 +53,13 @@ def haversine(coord1, coord2):
     distance = R * c
     return max(distance, 0.1)
 
+# =========================================================
 def load_locations(filepath, num_users):
-    """Carga las ubicaciones desde un archivo de texto a un array de NumPy."""
+    """
+    Carga las ubicaciones desde un archivo de texto a un array de NumPy.
+    Cada línea debe tener el formato: lat,lon
+    Devuelve un array de shape (num_users, 2)
+    """
     logging.info(f"Iniciando carga de ubicaciones desde {filepath}")
     locations = np.zeros((num_users, 2), dtype=np.float32)
     try:
@@ -61,15 +75,19 @@ def load_locations(filepath, num_users):
         logging.info("Carga de ubicaciones completada.")
         return locations
     except FileNotFoundError:
-        logging.error(f"Error Crítico: Archivo de ubicaciones no encontrado en {filepath}.")
+        logging.error(f"Error Cr\u00edtico: Archivo de ubicaciones no encontrado en {filepath}.")
         return None
 
+# =========================================================
 def build_weighted_graph(user_filepath, locations_np):
-    """Construye el grafo social ponderado a partir de los archivos de datos."""
+    """
+    Construye el grafo social ponderado a partir de los archivos de datos.
+    Devuelve: grafo igraph, id2idx, idx2id
+    """
     if locations_np is None:
         return None, None, None
 
-    logging.info("Primera pasada: Recolectando todos los IDs únicos...")
+    logging.info("Primera pasada: Recolectando todos los IDs \u00fanicos...")
     user_ids = set()
     try:
         with open(user_filepath, 'r') as f:
@@ -84,17 +102,17 @@ def build_weighted_graph(user_filepath, locations_np):
                     if cleaned_id: 
                         user_ids.add(int(cleaned_id))
     except FileNotFoundError:
-        logging.error(f"Error Crítico: Archivo de usuarios no encontrado en {user_filepath}.")
+        logging.error(f"Error Cr\u00edtico: Archivo de usuarios no encontrado en {user_filepath}.")
         return None, None, None
     except ValueError as e:
-        logging.error(f"Error de valor en la primera pasada, línea {line_num}: {e}. Revisa el formato del archivo de usuarios.")
+        logging.error(f"Error de valor en la primera pasada, l\u00ednea {line_num}: {e}. Revisa el formato del archivo de usuarios.")
         return None, None, None
 
     sorted_user_ids = sorted(list(user_ids))
     id2idx = {uid: idx for idx, uid in enumerate(sorted_user_ids)}
     idx2id = {idx: uid for uid, idx in id2idx.items()}
     num_unique_nodes = len(id2idx)
-    logging.info(f"Mapeados {num_unique_nodes:,} IDs únicos a índices de grafo (0 a {num_unique_nodes-1}).")
+    logging.info(f"Mapeados {num_unique_nodes:,} IDs \u00fanicos a \u00edndices de grafo (0 a {num_unique_nodes-1}).")
 
     logging.info("Segunda pasada: Generando aristas y calculando pesos...")
     edge_list, weight_list = [], []
@@ -125,7 +143,7 @@ def build_weighted_graph(user_filepath, locations_np):
                         edge_list.append((src_idx, dst_idx))
                         weight_list.append(distance)
                 except ValueError:
-                    logging.warning(f"Dato no numérico {repr(cleaned_dst_str)} encontrado en la línea {line_num}. Se ignora.")
+                    logging.warning(f"Dato no num\u00e9rico {repr(cleaned_dst_str)} encontrado en la l\u00ednea {line_num}. Se ignora.")
                     continue
 
     logging.info(f"Construyendo grafo igraph con {len(edge_list):,} aristas ponderadas...")
@@ -133,8 +151,12 @@ def build_weighted_graph(user_filepath, locations_np):
     logging.info(f"Grafo ponderado final creado con {g.vcount():,} nodos y {g.ecount():,} aristas.")
     return g, id2idx, idx2id
 
+# =========================================================
 def save_processed_data(g, id2idx, idx2id, locations_np):
-    """Guarda todos los artefactos procesados en archivos pickle."""
+    """
+    Guarda todos los artefactos procesados en archivos pickle.
+    Incluye: grafo, mapeos id<->idx y ubicaciones.
+    """
     logging.info("Iniciando guardado de datos procesados...")
     if g:
         g.write_pickle(GRAPH_IGRAPH_FILE)
@@ -153,8 +175,11 @@ def save_processed_data(g, id2idx, idx2id, locations_np):
         with open(LOCATIONS_PKL_FILE, 'wb') as f: pickle.dump(locations_dict, f)
         logging.info(f"Diccionario de ubicaciones guardado en {LOCATIONS_PKL_FILE}")
 
+# =========================================================
+# MAIN
+# =========================================================
 if __name__ == "__main__":
-    logging.info("--- INICIANDO SCRIPT DE CONSTRUCCIÓN DE GRAFO PONDERADO ---")
+    logging.info("\n============================================\n--- INICIANDO SCRIPT DE CONSTRUCCI\u00d3N DE GRAFO PONDERADO ---\n============================================")
     start_time = time.time()
     
     locations_data = load_locations(LOCATION_TXT_FILE, NUM_USERS)
@@ -163,6 +188,6 @@ if __name__ == "__main__":
     if graph_igraph is not None:
         save_processed_data(graph_igraph, id_to_idx, idx_to_id, locations_data)
         end_time = time.time()
-        logging.info(f"--- SCRIPT DE CONSTRUCCIÓN FINALIZADO EXITOSAMENTE en {end_time - start_time:.2f} segundos ---")
+        logging.info(f"\n============================================\n--- SCRIPT DE CONSTRUCCI\u00d3N FINALIZADO EXITOSAMENTE en {end_time - start_time:.2f} segundos ---\n============================================")
     else:
         logging.critical("No se pudo construir el grafo. Proceso abortado.")

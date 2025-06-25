@@ -208,10 +208,10 @@ if __name__ == "__main__":
         plot_degree_distribution(g, os.path.join(VISUALIZATIONS_DIR, '2_degree_distribution.png'))
         partition = detect_or_load_communities(g, COMMUNITY_PARTITION_FILE)
         if partition:
-            create_community_map(partition, locations, idx2id, os.path.join(VISUALIZATIONS_DIR, '3_community_map.html'))
-            plot_community_sizes(partition, os.path.join(VISUALIZATIONS_DIR, '4_community_sizes.png'))
+            create_community_map(partition, locations, idx2id, os.path.join(VISUALIZATIONS_DIR, '3_community.html'))
         else:
             logging.error("No se pudieron generar las comunidades.")
+
         logging.info("--- SCRIPT DE VISUALIZACIÓN FINALIZADO ---")
         logging.info(f"Todos los archivos han sido guardados en el directorio: '{VISUALIZATIONS_DIR}'")
     else:

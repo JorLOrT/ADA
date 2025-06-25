@@ -10,13 +10,16 @@ from collections import defaultdict
 import community_louvain as community
 import json
 
+# =========================================================
+# CONFIGURACIÓN Y CONSTANTES
+# =========================================================
 USER_TXT_FILE = './dataset/10_million_user.txt'
 OUTPUT_DIR = './processed_data' 
 GRAPH_IGRAPH_FILE = os.path.join(OUTPUT_DIR, "social_network_graph.igraph.pkl")
 IDX2ID_PKL_FILE = os.path.join(OUTPUT_DIR, "social_network_idx2id.pkl")
 ID2IDX_PKL_FILE = os.path.join(OUTPUT_DIR, "social_network_id2idx.pkl")
 LOG_FILE = os.path.join(OUTPUT_DIR,"graph_analizer.log")
-SAMPLE_SIZE_FOR_PATHS = 10000
+SAMPLE_SIZE_FOR_PATHS = 10000000
 
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 logging.basicConfig(level=logging.INFO,
@@ -24,7 +27,13 @@ logging.basicConfig(level=logging.INFO,
                     handlers=[logging.FileHandler(LOG_FILE, mode='w'),
                               logging.StreamHandler()])
 
+# =========================================================
+# FUNCIONES DE CARGA Y MÉTRICAS BÁSICAS
+# =========================================================
 def load_preprocessed_data():
+    """
+    Carga el grafo y los mapeos preprocesados desde disco.
+    """
     logging.info("Iniciando la carga de datos pre-procesados...")
     try:
         g = ig.Graph.Read_Pickle(GRAPH_IGRAPH_FILE)
@@ -36,11 +45,19 @@ def load_preprocessed_data():
         logging.error(f"Error: Archivo no encontrado - {e.filename}. Ejecuta 'graph_builder.py' primero.")
         return None, None, None
 
+# =========================================================
 def analyze_basic_metrics(g):
+    """
+    Imprime métricas básicas del grafo: nodos, aristas y densidad.
+    """
     logging.info("--- 1. Análisis de Métricas Básicas ---")
     logging.info(f"Nodos: {g.vcount():,}, Aristas: {g.ecount():,}, Densidad: {g.density():.4e}")
 
+# =========================================================
 def analyze_degree_centrality(g, idx2id, top_n=10):
+    """
+    Analiza la centralidad de grado (in/out) y muestra el top de usuarios.
+    """
     logging.info(f"--- 2. Análisis de Centralidad de Grado (Top {top_n}) ---")
     if not g.is_directed():
         logging.warning("ADVERTENCIA: El grafo cargado no es dirigido. Grado de entrada y salida serán idénticos.")
@@ -57,7 +74,11 @@ def analyze_degree_centrality(g, idx2id, top_n=10):
     for idx in top_out_indices:
         logging.info(f"  - ID {idx2id.get(idx, 'N/A')}: sigue a {out_degrees[idx]:,} usuarios")
 
+# =========================================================
 def analyze_connectivity(g):
+    """
+    Analiza componentes conectados (WCC y SCC) y sus tamaños.
+    """
     logging.info("--- 3. Análisis de Conectividad (WCC y SCC) ---")
     start = time.time()
     g_undirected = g.as_undirected(combine_edges='first')
@@ -75,7 +96,11 @@ def analyze_connectivity(g):
         logging.info(f"  - Tamaño del componente gigante: {giant_scc.vcount():,} nodos ({giant_scc.vcount()/g.vcount()*100:.2f}%)")
     logging.info(f"Análisis de conectividad completado en {time.time() - start:.2f}s.")
 
+# =========================================================
 def dijkstra(g, start_node):
+    """
+    Algoritmo de Dijkstra para caminos más cortos ponderados desde un nodo origen.
+    """
     distances = defaultdict(lambda: float('inf'))
     distances[start_node] = 0
     pq = [(0, start_node)]
@@ -92,7 +117,11 @@ def dijkstra(g, start_node):
                 heapq.heappush(pq, (distance, neighbor_idx))
     return distances
 
+# =========================================================
 def calculate_avg_shortest_path(g, sample_size):
+    """
+    Calcula el camino más corto promedio ponderado usando una muestra de nodos.
+    """
     logging.info(f"--- 4. Camino Más Corto Promedio Ponderado (Muestra de {sample_size}) ---")
     if 'weight' not in g.edge_attributes():
         logging.error("El grafo no está ponderado. No se puede ejecutar este análisis.")
@@ -116,9 +145,13 @@ def calculate_avg_shortest_path(g, sample_size):
     logging.info(f"Cálculo sobre muestra completado en {time.time() - start:.2f}s.")
     logging.info(f"Camino más corto promedio (estimado): {avg_path:.2f} km")
 
+# =========================================================
 total_communities = {}
 
 def analyze_communities(g):
+    """
+    Detecta comunidades usando el algoritmo de Louvain y muestra estadísticas.
+    """
     logging.info("--- 5. Detección de Comunidades (Algoritmo de Louvain) ---")
     start = time.time()
     g_undirected = g.as_undirected(combine_edges='first')
@@ -156,7 +189,11 @@ def analyze_communities(g):
     for i, comm in enumerate(top_communities):
         logging.info(f"  - Comunidad {i+1}: {len(comm):,} nodos")
 
+# =========================================================
 def kruskal_mst_implementation(g):
+    """
+    Implementación de Kruskal para encontrar el Árbol de Expansión Mínima (MST).
+    """
     logging.info("---6. Kruskal MST ---")
     import time
     start = time.time()
@@ -195,6 +232,7 @@ def kruskal_mst_implementation(g):
     logging.info(f"Tiempo de ejecución Kruskal: {elapsed:.2f} segundos")
     return mst_edges, total_weight
 
+# =========================================================
 def prim_mst_implementation(g):
     """
     Implementación de Prim usando heapq sobre un grafo igraph no dirigido y ponderado.
@@ -238,7 +276,11 @@ def prim_mst_implementation(g):
     logging.info(f"Tiempo de ejecución Prim: {elapsed:.2f} segundos")
     return mst_edges, total_weight
 
+# =========================================================
 def get_users_followed_by(g, target_id, id2idx, idx2id):
+    """
+    Devuelve la lista de usuarios seguidos por un usuario dado (por ID).
+    """
     logging.info(f"--- 8. Consultando a quién sigue el usuario ID {target_id} ---")
     if target_id not in id2idx:
         logging.warning(f"El usuario con ID {target_id} no fue encontrado en el grafo.")
@@ -248,6 +290,7 @@ def get_users_followed_by(g, target_id, id2idx, idx2id):
     following_ids = [idx2id[idx] for idx in following_indices]
     return following_ids
 
+# =========================================================
 def export_stats_json(total_users, total_connections, total_communities, geo_coverage, output_path="stats.json"):
     """
     Exporta las estadísticas principales a un archivo JSON.
@@ -262,6 +305,9 @@ def export_stats_json(total_users, total_connections, total_communities, geo_cov
         json.dump(stats, f, ensure_ascii=False, indent=2)
     logging.info(f"Archivo de estadísticas exportado a {output_path}")
 
+# =========================================================
+# MAIN
+# =========================================================
 if __name__ == "__main__":
     logging.info("--- INICIANDO SCRIPT DE ANÁLISIS DE GRAFO ---")
     
