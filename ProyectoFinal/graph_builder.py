@@ -1,3 +1,5 @@
+# graph_builder.py (Versión final y robusta)
+
 import numpy as np
 import igraph as ig
 import time
@@ -7,13 +9,12 @@ import pickle
 from math import radians, sin, cos, sqrt, atan2
 
 NUM_USERS = 10_000_000
-LOCATION_TXT_FILE = 'D:\\ADA\\dataset\\10_million_location.txt'
-USER_TXT_FILE = 'D:\\ADA\\dataset\\10_million_user.txt'
-OUTPUT_DIR = 'D:\\ADA\\processed_data_10M'
+LOCATION_TXT_FILE = './dataset/1_million_location.txt'
+USER_TXT_FILE = './dataset/1_million_user.txt'
+OUTPUT_DIR = './processed_data'
 
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
-# Nombres de archivo de salida
 GRAPH_IGRAPH_FILE = os.path.join(OUTPUT_DIR, "social_network_graph.igraph.pkl")
 LOCATIONS_PKL_FILE = os.path.join(OUTPUT_DIR, "social_network_locations.pkl")
 IDX2ID_PKL_FILE = os.path.join(OUTPUT_DIR, "social_network_idx2id.pkl")
@@ -26,23 +27,34 @@ logging.basicConfig(level=logging.INFO,
                               logging.StreamHandler()])
 
 def haversine(coord1, coord2):
-    R = 6371.0
+    """Calcula la distancia Haversine entre dos puntos (lat, lon)."""
+    R = 6371.0 
     lat1, lon1 = coord1
     lat2, lon2 = coord2
-    if (lat1 == 0 and lon1 == 0) or (lat2 == 0 and lon2 == 0): return 40000.0
-    dlat = radians(lat2 - lat1); dlon = radians(lon2 - lon1)
-    a = sin(dlat / 2)*2 + cos(radians(lat1)) * cos(radians(lat2)) * sin(dlon / 2)*2
+    
+    if (lat1 == 0 and lon1 == 0) or (lat2 == 0 and lon2 == 0):
+        return 40000.0
+
+    rlat1, rlon1, rlat2, rlon2 = map(radians, [lat1, lon1, lat2, lon2])
+
+    dlon = rlon2 - rlon1
+    dlat = rlat2 - rlat1
+
+    a = sin(dlat / 2)**2 + cos(rlat1) * cos(rlat2) * sin(dlon / 2)**2
     c = 2 * atan2(sqrt(a), sqrt(1 - a))
+
     distance = R * c
     return max(distance, 0.1)
 
 def load_locations(filepath, num_users):
+    """Carga las ubicaciones desde un archivo de texto a un array de NumPy."""
     logging.info(f"Iniciando carga de ubicaciones desde {filepath}")
     locations = np.zeros((num_users, 2), dtype=np.float32)
     try:
         with open(filepath, 'r') as f:
             for i, line in enumerate(f):
-                if i >= num_users: break
+                if i >= num_users:
+                    break
                 try:
                     lat, lon = map(float, line.strip().split(','))
                     locations[i] = [lat, lon]
@@ -55,47 +67,67 @@ def load_locations(filepath, num_users):
         return None
 
 def build_weighted_graph(user_filepath, locations_np):
-    if locations_np is None: return None, None, None
+    """Construye el grafo social ponderado a partir de los archivos de datos."""
+    if locations_np is None:
+        return None, None, None
+
     logging.info("Primera pasada: Recolectando todos los IDs únicos...")
     user_ids = set()
-    with open(user_filepath, 'r') as f:
-        for line_num, line_content in enumerate(f, start=1):
-            if line_num > NUM_USERS: break
-            user_ids.add(line_num)
-            dst_ids = {int(id_str.strip()) for id_str in line_content.strip().split(',') if id_str.strip()}
-            user_ids.update(dst_ids)
-    
+    try:
+        with open(user_filepath, 'r') as f:
+            for line_num, line_content in enumerate(f, start=1):
+                if line_num > NUM_USERS:
+                    break
+                user_ids.add(line_num) 
+                
+                dst_ids_str = line_content.strip().split(',')
+                for id_str in dst_ids_str:
+                    cleaned_id = id_str.strip()
+                    if cleaned_id: 
+                        user_ids.add(int(cleaned_id))
+    except FileNotFoundError:
+        logging.error(f"Error Crítico: Archivo de usuarios no encontrado en {user_filepath}.")
+        return None, None, None
+    except ValueError as e:
+        logging.error(f"Error de valor en la primera pasada, línea {line_num}: {e}. Revisa el formato del archivo de usuarios.")
+        return None, None, None
+
     sorted_user_ids = sorted(list(user_ids))
     id2idx = {uid: idx for idx, uid in enumerate(sorted_user_ids)}
     idx2id = {idx: uid for uid, idx in id2idx.items()}
     num_unique_nodes = len(id2idx)
-    logging.info(f"Mapeados {num_unique_nodes:,} IDs únicos a índices.")
+    logging.info(f"Mapeados {num_unique_nodes:,} IDs únicos a índices de grafo (0 a {num_unique_nodes-1}).")
 
     logging.info("Segunda pasada: Generando aristas y calculando pesos...")
     edge_list, weight_list = [], []
     with open(user_filepath, 'r') as f:
         for line_num, line_content in enumerate(f, start=1):
-            if line_num > NUM_USERS: break
-            src_id = line_num
-            if src_id not in id2idx: continue
-            src_idx = id2idx[src_id]
-            if not (1 <= src_id <= len(locations_np)): continue
-            coord_src = locations_np[src_id - 1]
+            if line_num > NUM_USERS:
+                break
             
+            src_id = line_num
+            if src_id not in id2idx or not (1 <= src_id <= len(locations_np)):
+                continue
+
+            src_idx = id2idx[src_id]
+            coord_src = locations_np[src_id - 1]
+
             for dst_str in line_content.strip().split(','):
-                cleaned_dst_str = dst_str.strip() 
-                if not cleaned_dst_str: continue
+                cleaned_dst_str = dst_str.strip()
+                if not cleaned_dst_str:
+                    continue
+                
                 try:
                     dst_id = int(cleaned_dst_str)
-                    if dst_id not in id2idx: continue
-                    dst_idx = id2idx[dst_id]
-                    if not (1 <= dst_id <= len(locations_np)): continue
-                    coord_dst = locations_np[dst_id - 1]
-                    distance = haversine(coord_src, coord_dst)
-                    edge_list.append((src_idx, dst_idx))
-                    weight_list.append(distance)
+                    if dst_id in id2idx and (1 <= dst_id <= len(locations_np)):
+                        dst_idx = id2idx[dst_id]
+                        coord_dst = locations_np[dst_id - 1]
+                        
+                        distance = haversine(coord_src, coord_dst)
+                        edge_list.append((src_idx, dst_idx))
+                        weight_list.append(distance)
                 except ValueError:
-                    logging.warning(f"ID no numérico '{cleaned_dst_str}' encontrado en la línea {line_num}. Ignorando.")
+                    logging.warning(f"Dato no numérico {repr(cleaned_dst_str)} encontrado en la línea {line_num}. Se ignora.")
                     continue
 
     logging.info(f"Construyendo grafo igraph con {len(edge_list):,} aristas ponderadas...")
@@ -104,28 +136,35 @@ def build_weighted_graph(user_filepath, locations_np):
     return g, id2idx, idx2id
 
 def save_processed_data(g, id2idx, idx2id, locations_np):
-    logging.info("Iniciando el guardado de TODOS los datos procesados...")
-    if g: g.write_pickle(GRAPH_IGRAPH_FILE); logging.info(f"Grafo guardado.")
+    """Guarda todos los artefactos procesados en archivos pickle."""
+    logging.info("Iniciando guardado de datos procesados...")
+    if g:
+        g.write_pickle(GRAPH_IGRAPH_FILE)
+        logging.info(f"Grafo guardado en {GRAPH_IGRAPH_FILE}")
     if id2idx:
         with open(ID2IDX_PKL_FILE, 'wb') as f: pickle.dump(id2idx, f)
-        logging.info(f"Mapeo id->idx guardado.")
+        logging.info(f"Mapeo id->idx guardado en {ID2IDX_PKL_FILE}")
     if idx2id:
         with open(IDX2ID_PKL_FILE, 'wb') as f: pickle.dump(idx2id, f)
-        logging.info(f"Mapeo idx->id guardado.")
+        logging.info(f"Mapeo idx->id guardado en {IDX2ID_PKL_FILE}")
     if locations_np is not None and id2idx:
         locations_dict = {
             user_id: tuple(locations_np[user_id - 1])
             for user_id in id2idx.keys() if 1 <= user_id <= len(locations_np)
         }
         with open(LOCATIONS_PKL_FILE, 'wb') as f: pickle.dump(locations_dict, f)
-        logging.info(f"Diccionario de ubicaciones guardado.")
+        logging.info(f"Diccionario de ubicaciones guardado en {LOCATIONS_PKL_FILE}")
 
 if __name__ == "__main__":
     logging.info("--- INICIANDO SCRIPT DE CONSTRUCCIÓN DE GRAFO PONDERADO ---")
+    start_time = time.time()
+    
     locations_data = load_locations(LOCATION_TXT_FILE, NUM_USERS)
     graph_igraph, id_to_idx, idx_to_id = build_weighted_graph(USER_TXT_FILE, locations_data)
+    
     if graph_igraph is not None:
         save_processed_data(graph_igraph, id_to_idx, idx_to_id, locations_data)
-        logging.info("--- SCRIPT DE CONSTRUCCIÓN FINALIZADO EXITOSAMENTE ---")
+        end_time = time.time()
+        logging.info(f"--- SCRIPT DE CONSTRUCCIÓN FINALIZADO EXITOSAMENTE en {end_time - start_time:.2f} segundos ---")
     else:
-        logging.critical("No se pudo construir el grafo. Abortando.")
+        logging.critical("No se pudo construir el grafo. Proceso abortado.")
