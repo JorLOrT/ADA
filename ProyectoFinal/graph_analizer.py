@@ -77,7 +77,7 @@ def analyze_connectivity(g):
         logging.info(f"  - Tamaño del componente gigante: {giant_scc.vcount():,} nodos ({giant_scc.vcount()/g.vcount()*100:.2f}%)")
     logging.info(f"Análisis de conectividad completado en {time.time() - start:.2f}s.")
 
-def dijkstra_heapq_weighted(g, start_node):
+def dijkstra(g, start_node):
     distances = defaultdict(lambda: float('inf'))
     distances[start_node] = 0
     pq = [(0, start_node)]
@@ -108,7 +108,7 @@ def calculate_avg_shortest_path_sample(g, sample_size):
     logging.info(f"Ejecutando Dijkstra ponderado desde {len(source_nodes)} nodos...")
     for i, source_node in enumerate(source_nodes):
         if (i + 1) % 1000 == 0: logging.info(f"  Procesado {i+1}/{len(source_nodes)} nodos...")
-        distances = dijkstra_heapq_weighted(g, source_node)
+        distances = dijkstra(g, source_node)
         for dist in distances.values():
             if dist != float('inf') and dist > 0:
                 total_path_length += dist
@@ -117,7 +117,7 @@ def calculate_avg_shortest_path_sample(g, sample_size):
     avg_path = (total_path_length / total_paths_counted) if total_paths_counted > 0 else 0
     logging.info(f"Cálculo sobre muestra completado en {time.time() - start:.2f}s.")
     logging.info(f"Camino más corto promedio (estimado): {avg_path:.2f} km")
-    
+
 def analyze_communities(g):
     import networkx as nx
     import community_louvain as community

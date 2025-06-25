@@ -1,6 +1,3 @@
-# graph_builder.py
-# VERSIÓN FINAL Y VERIFICADA: Corrige el error de parseo de la línea de usuarios.
-
 import numpy as np
 import igraph as ig
 import time
@@ -9,10 +6,9 @@ import logging
 import pickle
 from math import radians, sin, cos, sqrt, atan2
 
-NUM_USERS = 10_000
-# Asegúrate de que estos archivos y NUM_USERS coincidan con tu dataset
-LOCATION_TXT_FILE = './dataset/1_million_location.txt'
-USER_TXT_FILE = './dataset/1_million_user.txt'
+NUM_USERS = 10_000_000
+LOCATION_TXT_FILE = './dataset/10_million_location.txt'
+USER_TXT_FILE = './dataset/10_million_user.txt'
 OUTPUT_DIR = './processed_data'
 
 os.makedirs(OUTPUT_DIR, exist_ok=True)
@@ -29,7 +25,7 @@ logging.basicConfig(level=logging.INFO,
                     handlers=[logging.FileHandler(LOG_FILE, mode='w'),
                               logging.StreamHandler()])
 
-def haversine_distance(coord1, coord2):
+def haversine(coord1, coord2):
     R = 6371.0 
     lat1, lon1 = coord1
     lat2, lon2 = coord2
@@ -39,7 +35,7 @@ def haversine_distance(coord1, coord2):
     c = 2 * atan2(sqrt(a), sqrt(1 - a))
     return R * c
 
-def load_locations_numpy(filepath, num_users):
+def load_locations(filepath, num_users):
     logging.info(f"Iniciando carga de ubicaciones desde {filepath}")
     locations = np.zeros((num_users, 2), dtype=np.float32)
     try:
@@ -47,7 +43,6 @@ def load_locations_numpy(filepath, num_users):
             for i, line in enumerate(f):
                 if i >= num_users: break
                 try:
-                    # Esto ya estaba correcto, usa split(',')
                     lat, lon = map(float, line.strip().split(','))
                     locations[i] = [lat, lon]
                 except (ValueError, IndexError):
@@ -66,7 +61,6 @@ def build_weighted_graph(user_filepath, locations_np):
         for line_num, line_content in enumerate(f, start=1):
             if line_num > NUM_USERS: break
             user_ids.add(line_num)
-            # Esto ya estaba correcto, usa split(',')
             dst_ids = {int(id_str.strip()) for id_str in line_content.strip().split(',') if id_str.strip()}
             user_ids.update(dst_ids)
     
@@ -87,9 +81,8 @@ def build_weighted_graph(user_filepath, locations_np):
             if not (1 <= src_id <= len(locations_np)): continue
             coord_src = locations_np[src_id - 1]
             
-            # FIX: Usar split(',') para dividir la cadena correctamente.
             for dst_str in line_content.strip().split(','):
-                cleaned_dst_str = dst_str.strip() # Limpiar espacios en blanco
+                cleaned_dst_str = dst_str.strip() 
                 if not cleaned_dst_str: continue
                 try:
                     dst_id = int(cleaned_dst_str)
@@ -97,7 +90,7 @@ def build_weighted_graph(user_filepath, locations_np):
                     dst_idx = id2idx[dst_id]
                     if not (1 <= dst_id <= len(locations_np)): continue
                     coord_dst = locations_np[dst_id - 1]
-                    distance = haversine_distance(coord_src, coord_dst)
+                    distance = haversine(coord_src, coord_dst)
                     edge_list.append((src_idx, dst_idx))
                     weight_list.append(distance)
                 except ValueError:
@@ -128,7 +121,7 @@ def save_processed_data(g, id2idx, idx2id, locations_np):
 
 if __name__ == "__main__":
     logging.info("--- INICIANDO SCRIPT DE CONSTRUCCIÓN DE GRAFO PONDERADO ---")
-    locations_data = load_locations_numpy(LOCATION_TXT_FILE, NUM_USERS)
+    locations_data = load_locations(LOCATION_TXT_FILE, NUM_USERS)
     graph_igraph, id_to_idx, idx_to_id = build_weighted_graph(USER_TXT_FILE, locations_data)
     if graph_igraph is not None:
         save_processed_data(graph_igraph, id_to_idx, idx_to_id, locations_data)
