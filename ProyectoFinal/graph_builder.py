@@ -7,9 +7,9 @@ import pickle
 from math import radians, sin, cos, sqrt, atan2
 
 NUM_USERS = 10_000_000
-LOCATION_TXT_FILE = './dataset/10_million_location.txt'
-USER_TXT_FILE = './dataset/10_million_user.txt'
-OUTPUT_DIR = './processed_data'
+LOCATION_TXT_FILE = 'D:\\ADA\\dataset\\10_million_location.txt'
+USER_TXT_FILE = 'D:\\ADA\\dataset\\10_million_user.txt'
+OUTPUT_DIR = 'D:\\ADA\\processed_data_10M'
 
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
@@ -26,14 +26,15 @@ logging.basicConfig(level=logging.INFO,
                               logging.StreamHandler()])
 
 def haversine(coord1, coord2):
-    R = 6371.0 
+    R = 6371.0
     lat1, lon1 = coord1
     lat2, lon2 = coord2
-    if (lat1 == 0 and lon1 == 0) or (lat2 == 0 and lon2 == 0): return float('inf') 
+    if (lat1 == 0 and lon1 == 0) or (lat2 == 0 and lon2 == 0): return 40000.0
     dlat = radians(lat2 - lat1); dlon = radians(lon2 - lon1)
-    a = sin(dlat / 2)**2 + cos(radians(lat1)) * cos(radians(lat2)) * sin(dlon / 2)**2
+    a = sin(dlat / 2)*2 + cos(radians(lat1)) * cos(radians(lat2)) * sin(dlon / 2)*2
     c = 2 * atan2(sqrt(a), sqrt(1 - a))
-    return R * c
+    distance = R * c
+    return max(distance, 0.1)
 
 def load_locations(filepath, num_users):
     logging.info(f"Iniciando carga de ubicaciones desde {filepath}")

@@ -5,10 +5,9 @@ import os
 import logging
 import pickle
 import heapq
-
+import networkx as nx
 from collections import defaultdict
 import community_louvain as community
-
 
 USER_TXT_FILE = './dataset/1_million_user.txt'
 OUTPUT_DIR = './processed_data' 
@@ -45,13 +44,13 @@ def analyze_degree_centrality(g, idx2id, top_n=10):
     if not g.is_directed():
         logging.warning("ADVERTENCIA: El grafo cargado no es dirigido. Grado de entrada y salida serán idénticos.")
     
-    in_degrees = g.degree(mode="in")
+    in_degrees = g.degree(vertices=None,mode="in")
     top_in_indices = np.argsort(in_degrees)[-top_n:][::-1]
     logging.info("Top Usuarios con más seguidores (Más Populares):")
     for idx in top_in_indices:
         logging.info(f"  - ID {idx2id.get(idx, 'N/A')}: {in_degrees[idx]:,} seguidores")
 
-    out_degrees = g.degree(mode="out")
+    out_degrees = g.degree(vertices=None,mode="out")
     top_out_indices = np.argsort(out_degrees)[-top_n:][::-1]
     logging.info("Top Usuarios que siguen a más personas (Más Activos):")
     for idx in top_out_indices:
@@ -60,7 +59,6 @@ def analyze_degree_centrality(g, idx2id, top_n=10):
 def analyze_connectivity(g):
     logging.info("--- 3. Análisis de Conectividad (WCC y SCC) ---")
     start = time.time()
-    # WCC: componentes conexas en el grafo NO dirigido
     g_undirected = g.as_undirected(combine_edges='first')
     wcc = g_undirected.components(mode='weak')
     logging.info("Componentes Débilmente Conectados (WCC):")
@@ -68,7 +66,6 @@ def analyze_connectivity(g):
     if wcc:
         giant_wcc = wcc.giant()
         logging.info(f"  - Tamaño del componente gigante: {giant_wcc.vcount():,} nodos ({giant_wcc.vcount()/g.vcount()*100:.2f}%)")
-    # SCC: componentes fuertemente conexas en el grafo dirigido
     scc = g.components(mode='strong')
     logging.info("Componentes Fuertemente Conectados (SCC):")
     logging.info(f"  - Número total de componentes: {len(scc):,}")
@@ -94,7 +91,7 @@ def dijkstra(g, start_node):
                 heapq.heappush(pq, (distance, neighbor_idx))
     return distances
 
-def calculate_avg_shortest_path_sample(g, sample_size):
+def calculate_avg_shortest_path(g, sample_size):
     logging.info(f"--- 4. Camino Más Corto Promedio Ponderado (Muestra de {sample_size}) ---")
     if 'weight' not in g.edge_attributes():
         logging.error("El grafo no está ponderado. No se puede ejecutar este análisis.")
@@ -119,35 +116,38 @@ def calculate_avg_shortest_path_sample(g, sample_size):
     logging.info(f"Camino más corto promedio (estimado): {avg_path:.2f} km")
 
 def analyze_communities(g):
-    import networkx as nx
-    import community_louvain as community
     logging.info("--- 5. Detección de Comunidades (Algoritmo de Louvain) ---")
     start = time.time()
-    # Convertir el grafo de igraph a NetworkX
     g_undirected = g.as_undirected(combine_edges='first')
+    edge_array = np.array(g_undirected.get_edgelist())
+    
     nx_g = nx.Graph()
     nx_g.add_nodes_from(range(g_undirected.vcount()))
-    for e in g_undirected.es:
-        source, target = e.tuple
-        if 'weight' in g_undirected.edge_attributes():
-            nx_g.add_edge(source, target, weight=e['weight'])
-        else:
-            nx_g.add_edge(source, target)
-
-    # Ejecutar Louvain
+    
+    if 'weight' in g_undirected.edge_attributes():
+        weights = np.array(g_undirected.es['weight'])
+        edges_with_weights = [(int(edge_array[i, 0]), int(edge_array[i, 1]), {'weight': weights[i]}) 
+                             for i in range(len(edge_array))]
+        nx_g.add_edges_from(edges_with_weights)
+    else:
+        nx_g.add_edges_from(edge_array)
+    
+    conversion_time = time.time() - start
+    logging.info(f"Conversión numpy completada en {conversion_time:.2f}s")
+    
     partition = community.best_partition(nx_g)
     logging.info(f"Detección de comunidades completada en {time.time() - start:.2f}s.")
     comunidades = {}
     for nodo, id_comunidad in partition.items():
         comunidades.setdefault(id_comunidad, []).append(nodo)
     logging.info(f"Número de comunidades detectadas: {len(comunidades):,}")
-    # Calcular modularidad si es posible
+    
     try:
         modularidad = community.modularity(partition, nx_g)
         logging.info(f"Modularidad del grafo: {modularidad:.4f}")
     except Exception:
         pass
-    # Mostrar las 5 comunidades más grandes
+    
     top_communities = sorted(comunidades.values(), key=len, reverse=True)[:5]
     logging.info("Tamaño de las 5 comunidades más grandes:")
     for i, comm in enumerate(top_communities):
@@ -159,15 +159,13 @@ def kruskal_mst_implementation(g):
     start = time.time()
     g_undirected = g.as_undirected(combine_edges='first')
     num_nodes = g_undirected.vcount()
-    # 1. Obtener todas las aristas y pesos
     edges = []
     for e in g_undirected.es:
         source, target = e.tuple
         weight = e['weight'] if 'weight' in g_undirected.edge_attributes() else 1.0
         edges.append((weight, source, target))
-    # 2. Ordenar aristas por peso
+   
     edges.sort()
-    # 3. Estructura Union-Find
     parent = list(range(num_nodes))
     def find(u):
         while parent[u] != u:
@@ -180,7 +178,6 @@ def kruskal_mst_implementation(g):
             return False
         parent[ru] = rv
         return True
-    # 4. Construir el MST
     mst_edges = []
     total_weight = 0.0
     for weight, u, v in edges:
@@ -208,10 +205,9 @@ def prim_mst_implementation(g):
     if num_nodes == 0:
         return [], 0.0
     visited = [False] * num_nodes
-    min_edges = []  # heap: (peso, origen, destino)
+    min_edges = [] 
     mst_edges = []
     total_weight = 0.0
-    # Comenzar desde el nodo 0
     visited[0] = True
     for e in g_undirected.incident(0):
         edge = g_undirected.es[e]
@@ -258,12 +254,12 @@ if __name__ == "__main__":
         analyze_basic_metrics(graph)
         analyze_degree_centrality(graph, idx2id)
         analyze_connectivity(graph)
-        calculate_avg_shortest_path_sample(graph, sample_size=SAMPLE_SIZE_FOR_PATHS)
+        calculate_avg_shortest_path(graph, sample_size=SAMPLE_SIZE_FOR_PATHS)
         analyze_communities(graph)
         kruskal_mst_implementation(graph)
         prim_mst_implementation(graph)
         
-        target_user_id = 223
+        target_user_id = 9998
         followed_by_target = get_users_followed_by(graph, target_user_id, id2idx, idx2id)
         if followed_by_target:
             logging.info(f"El usuario con ID {target_user_id} sigue a {len(followed_by_target):,} usuarios.")
