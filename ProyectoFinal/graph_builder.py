@@ -1,301 +1,137 @@
+# graph_builder.py
+# VERSIÓN FINAL Y VERIFICADA: Corrige el error de parseo de la línea de usuarios.
+
 import numpy as np
 import igraph as ig
 import time
 import os
 import logging
 import pickle
-from typing import List, Dict, Optional, Tuple
+from math import radians, sin, cos, sqrt, atan2
 
-# --- Constantes y Configuración ---
-NUM_USERS_REFERENCE = 10_000_000
-LOCATION_TXT_FILE = 'D:\\ADA\\dataset\\10_million_location.txt'
-USER_TXT_FILE = 'D:\\ADA\\dataset\\10_million_user.txt'
-OUTPUT_DIR = './processed_data_igraph'
-GRAPH_PKL_FILE = os.path.join(OUTPUT_DIR, "social_network.igraph.pkl")
-MST_PKL_FILE = os.path.join(OUTPUT_DIR, "social_network_mst.igraph.pkl")
-LOCATIONS_NPY_FILE = os.path.join(OUTPUT_DIR, "social_network_locations.npy")
-ID_MAP_PKL_FILE = os.path.join(OUTPUT_DIR, "social_network_id_mappings.pkl")
-COMMUNITIES_PKL_FILE = os.path.join(OUTPUT_DIR, "social_network_communities.pkl")
-LOG_FILE = os.path.join(OUTPUT_DIR, "graph_processing.log")
+NUM_USERS = 10_000
+# Asegúrate de que estos archivos y NUM_USERS coincidan con tu dataset
+LOCATION_TXT_FILE = './dataset/1_million_location.txt'
+USER_TXT_FILE = './dataset/1_million_user.txt'
+OUTPUT_DIR = './processed_data'
 
-# --- Configuración del Logging ---
 os.makedirs(OUTPUT_DIR, exist_ok=True)
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.FileHandler(LOG_FILE, mode='w'),
-        logging.StreamHandler()
-    ]
-)
 
-# --- Funciones Auxiliares ---
-def haversine_vectorized(lat1: np.ndarray, lon1: np.ndarray, lat2: np.ndarray, lon2: np.ndarray) -> np.ndarray:
-    lon1, lat1, lon2, lat2 = map(np.radians, [lon1, lat1, lon2, lat2])
-    dlon = lon2 - lon1
-    dlat = lat2 - lat1
-    a = np.sin(dlat / 2)**2 + np.cos(lat1) * np.cos(lat2) * np.sin(dlon / 2)**2
-    c = 2 * np.arcsin(np.sqrt(a))
-    r = 6371
-    return c * r
+# Nombres de archivo de salida
+GRAPH_IGRAPH_FILE = os.path.join(OUTPUT_DIR, "social_network_graph.igraph.pkl")
+LOCATIONS_PKL_FILE = os.path.join(OUTPUT_DIR, "social_network_locations.pkl")
+IDX2ID_PKL_FILE = os.path.join(OUTPUT_DIR, "social_network_idx2id.pkl")
+ID2IDX_PKL_FILE = os.path.join(OUTPUT_DIR, "social_network_id2idx.pkl")
+LOG_FILE = os.path.join(OUTPUT_DIR,"graph_builder.log")
 
-class GraphProcessor:
-    def __init__(self, user_filepath: str, location_filepath: str):
-        self.user_filepath = user_filepath
-        self.location_filepath = location_filepath
-        self.graph: Optional[ig.Graph] = None
-        self.id2idx: Optional[Dict[int, int]] = None
-        self.idx2id: Optional[List[int]] = None
-        self.locations: Optional[np.ndarray] = None
-        self.communities: Optional[ig.VertexClustering] = None
+logging.basicConfig(level=logging.INFO,
+                    format='%(asctime)s - %(levelname)s - [Builder] %(message)s',
+                    handlers=[logging.FileHandler(LOG_FILE, mode='w'),
+                              logging.StreamHandler()])
 
-    def _load_locations(self) -> None:
-        logging.info(f"Iniciando carga de ubicaciones desde {self.location_filepath}")
-        start_time = time.time()
-        try:
-            self.locations = np.loadtxt(self.location_filepath, delimiter=',', dtype=np.float32)
-            if self.locations.ndim != 2 or self.locations.shape[1] != 2:
-                raise ValueError("El archivo de ubicaciones debe tener 2 columnas (lat, lon).")
-            elapsed = time.time() - start_time
-            logging.info(f"Se cargaron {len(self.locations)} ubicaciones en {elapsed:.2f} segundos.")
-        except FileNotFoundError:
-            logging.error(f"Error Crítico: Archivo de ubicaciones no encontrado en {self.location_filepath}.")
-            self.locations = None
-        except Exception as e:
-            logging.error(f"Error Crítico al cargar ubicaciones: {e}", exc_info=True)
-            self.locations = None
+def haversine_distance(coord1, coord2):
+    R = 6371.0 
+    lat1, lon1 = coord1
+    lat2, lon2 = coord2
+    if (lat1 == 0 and lon1 == 0) or (lat2 == 0 and lon2 == 0): return float('inf') 
+    dlat = radians(lat2 - lat1); dlon = radians(lon2 - lon1)
+    a = sin(dlat / 2)**2 + cos(radians(lat1)) * cos(radians(lat2)) * sin(dlon / 2)**2
+    c = 2 * atan2(sqrt(a), sqrt(1 - a))
+    return R * c
 
-    def _build_graph_two_pass(self) -> None:
-        if not os.path.exists(self.user_filepath):
-            logging.error(f"Error Crítico: Archivo de usuarios no encontrado en {self.user_filepath}.")
-            return
-        logging.info("Iniciando pasada 1: Recolectando IDs de usuario únicos...")
-        start_time = time.time()
-        all_ids = set()
-        try:
-            with open(self.user_filepath, 'r') as f:
-                for i, line in enumerate(f):
-                    source_id_orig = i + 1
-                    all_ids.add(source_id_orig)
-                    target_ids_str = line.strip().split(',')
-                    if target_ids_str and target_ids_str[0]:
-                        all_ids.update(map(int, target_ids_str))
-        except (ValueError, IndexError) as e:
-            logging.error(f"Error parseando IDs en la primera pasada: {e}.", exc_info=True)
-            return
+def load_locations_numpy(filepath, num_users):
+    logging.info(f"Iniciando carga de ubicaciones desde {filepath}")
+    locations = np.zeros((num_users, 2), dtype=np.float32)
+    try:
+        with open(filepath, 'r') as f:
+            for i, line in enumerate(f):
+                if i >= num_users: break
+                try:
+                    # Esto ya estaba correcto, usa split(',')
+                    lat, lon = map(float, line.strip().split(','))
+                    locations[i] = [lat, lon]
+                except (ValueError, IndexError):
+                    locations[i] = [0.0, 0.0]
+        logging.info("Carga de ubicaciones completada.")
+        return locations
+    except FileNotFoundError:
+        logging.error(f"Error Crítico: Archivo de ubicaciones no encontrado en {filepath}.")
+        return None
 
-        sorted_ids = sorted(list(all_ids))
-        self.id2idx = {uid: i for i, uid in enumerate(sorted_ids)}
-        self.idx2id = sorted_ids
-        num_nodes = len(self.idx2id)
-        logging.info(f"Pasada 1 completada en {time.time() - start_time:.2f}s. {num_nodes} nodos únicos encontrados.")
+def build_weighted_graph(user_filepath, locations_np):
+    if locations_np is None: return None, None, None
+    logging.info("Primera pasada: Recolectando todos los IDs únicos...")
+    user_ids = set()
+    with open(user_filepath, 'r') as f:
+        for line_num, line_content in enumerate(f, start=1):
+            if line_num > NUM_USERS: break
+            user_ids.add(line_num)
+            # Esto ya estaba correcto, usa split(',')
+            dst_ids = {int(id_str.strip()) for id_str in line_content.strip().split(',') if id_str.strip()}
+            user_ids.update(dst_ids)
+    
+    sorted_user_ids = sorted(list(user_ids))
+    id2idx = {uid: idx for idx, uid in enumerate(sorted_user_ids)}
+    idx2id = {idx: uid for uid, idx in id2idx.items()}
+    num_unique_nodes = len(id2idx)
+    logging.info(f"Mapeados {num_unique_nodes:,} IDs únicos a índices.")
 
-        def edge_generator():
-            with open(self.user_filepath, 'r') as f:
-                for i, line in enumerate(f):
-                    source_id_orig = i + 1
-                    source_idx = self.id2idx[source_id_orig]
-                    target_ids_str = line.strip().split(',')
-                    if not target_ids_str or not target_ids_str[0]: continue
-                    for target_str in target_ids_str:
-                        try:
-                            target_id_orig = int(target_str)
-                            if target_id_orig in self.id2idx:
-                                yield (source_idx, self.id2idx[target_id_orig])
-                        except (ValueError, KeyError):
-                            continue
-
-        logging.info("Iniciando pasada 2: Construyendo grafo desde el generador de aristas...")
-        start_time = time.time()
-        self.graph = ig.Graph(n=num_nodes, edges=edge_generator(), directed=True)
-        logging.info(f"Grafo construido en {time.time() - start_time:.2f}s. ({self.graph.vcount()} nodos, {self.graph.ecount()} aristas).")
-        
-        logging.info("Simplificando grafo...")
-        self.graph.simplify(multiple=True, loops=True)
-        logging.info(f"Grafo simplificado: {self.graph.vcount()} nodos, {self.graph.ecount()} aristas.")
-
-    def _add_attributes_to_graph_vectorized(self) -> None:
-        if self.locations is None:
-            logging.warning("No hay datos de ubicación. Se usarán coordenadas (0,0).")
-            self.graph.vs["original_id"] = self.idx2id
-            self.graph.vs["latitude"] = [0.0] * self.graph.vcount()
-            self.graph.vs["longitude"] = [0.0] * self.graph.vcount()
-            return
-        logging.info("Asignando atributos a nodos del grafo...")
-        start_time = time.time()
-        self.graph.vs["original_id"] = self.idx2id
-        original_ids_in_graph = np.array(self.idx2id, dtype=np.int32)
-        latitudes = np.zeros(self.graph.vcount(), dtype=np.float32)
-        longitudes = np.zeros(self.graph.vcount(), dtype=np.float32)
-        max_loc_id = self.locations.shape[0]
-        valid_mask = (original_ids_in_graph >= 1) & (original_ids_in_graph <= max_loc_id)
-        valid_original_ids = original_ids_in_graph[valid_mask]
-        valid_locations = self.locations[valid_original_ids - 1]
-        latitudes[valid_mask] = valid_locations[:, 0]
-        longitudes[valid_mask] = valid_locations[:, 1]
-        self.graph.vs["latitude"] = latitudes.tolist()
-        self.graph.vs["longitude"] = longitudes.tolist()
-        logging.info(f"Atributos asignados en {time.time() - start_time:.2f}s.")
-
-    def run_build_pipeline(self) -> None:
-        self._load_locations()
-        self._build_graph_two_pass()
-        if self.graph:
-            self._add_attributes_to_graph_vectorized()
-
-    def analyze_basic_metrics(self) -> None:
-        if not self.graph: logging.warning("Grafo no disponible para análisis."); return
-        logging.info("Realizando análisis básico del grafo...")
-        start = time.time()
-        num_nodes, num_edges = self.graph.vcount(), self.graph.ecount()
-        if num_nodes == 0: logging.warning("Grafo vacío."); return
-        
-        logging.info(f"Análisis - Nodos: {num_nodes:,}, Aristas: {num_edges:,}")
-        logging.info(f"Análisis - Densidad: {self.graph.density():.4e}")
-        
-        wcc = self.graph.components(mode='weak')
-        logging.info(f"Análisis - Componentes débilmente conectados (WCC): {len(wcc):,}")
-        if wcc:
-            giant_wcc = wcc.giant()
-            logging.info(f"Análisis - WCC más grande: {giant_wcc.vcount():,} nodos ({giant_wcc.vcount()/num_nodes:.2%})")
-
-        scc = self.graph.components(mode='strong')
-        logging.info(f"Análisis - Componentes fuertemente conectados (SCC): {len(scc):,}")
-        if scc:
-            giant_scc = scc.giant()
-            logging.info(f"Análisis - SCC más grande: {giant_scc.vcount():,} nodos ({giant_scc.vcount()/num_nodes:.2%})")
-
-        logging.info(f"Tiempo de análisis básico: {time.time() - start:.2f}s.")
-
-    def analyze_degree_centrality(self, top_n: int = 10) -> None:
-        if not self.graph or not self.idx2id:
-            logging.warning("Grafo o mapeo de IDs no disponible."); return
-        
-        logging.info(f"Analizando los {top_n} nodos con mayor grado (in/out)...")
-        start_time = time.time()
-        if self.graph.vcount() == 0: return
-
-        in_degrees = np.array(self.graph.degree(mode='in'))
-        top_in_indices = np.argsort(in_degrees)[-top_n:]
-        logging.info("--- Nodos con mayor Grado de Entrada (Más 'Populares') ---")
-        for idx in reversed(top_in_indices):
-            logging.info(f"  - Usuario ID: {self.idx2id[idx]:<10} | Grado de Entrada: {in_degrees[idx]:,}")
-
-        out_degrees = np.array(self.graph.degree(mode='out'))
-        top_out_indices = np.argsort(out_degrees)[-top_n:]
-        logging.info("--- Nodos con mayor Grado de Salida (Más 'Activos') ---")
-        for idx in reversed(top_out_indices):
-            logging.info(f"  - Usuario ID: {self.idx2id[idx]:<10} | Grado de Salida: {out_degrees[idx]:,}")
+    logging.info("Segunda pasada: Generando aristas y calculando pesos...")
+    edge_list, weight_list = [], []
+    with open(user_filepath, 'r') as f:
+        for line_num, line_content in enumerate(f, start=1):
+            if line_num > NUM_USERS: break
+            src_id = line_num
+            if src_id not in id2idx: continue
+            src_idx = id2idx[src_id]
+            if not (1 <= src_id <= len(locations_np)): continue
+            coord_src = locations_np[src_id - 1]
             
-        logging.info(f"Análisis de grado completado en {time.time() - start_time:.2f}s.")
+            # FIX: Usar split(',') para dividir la cadena correctamente.
+            for dst_str in line_content.strip().split(','):
+                cleaned_dst_str = dst_str.strip() # Limpiar espacios en blanco
+                if not cleaned_dst_str: continue
+                try:
+                    dst_id = int(cleaned_dst_str)
+                    if dst_id not in id2idx: continue
+                    dst_idx = id2idx[dst_id]
+                    if not (1 <= dst_id <= len(locations_np)): continue
+                    coord_dst = locations_np[dst_id - 1]
+                    distance = haversine_distance(coord_src, coord_dst)
+                    edge_list.append((src_idx, dst_idx))
+                    weight_list.append(distance)
+                except ValueError:
+                    logging.warning(f"ID no numérico '{cleaned_dst_str}' encontrado en la línea {line_num}. Ignorando.")
+                    continue
 
-    def detect_communities(self, method: str = 'louvain') -> None:
-        if not self.graph: logging.error("El grafo no está construido."); return
-        logging.info(f"Iniciando detección de comunidades con '{method}'...")
-        start_time = time.time()
-        g_undirected = self.graph.as_undirected(mode='collapse')
-        self.communities = g_undirected.community_multilevel()
-        self.graph.vs["community"] = self.communities.membership
-        elapsed = time.time() - start_time
-        logging.info(f"Comunidades detectadas en {elapsed:.2f}s. Comunidades: {len(self.communities)}, Modularidad: {self.communities.modularity:.4f}")
+    logging.info(f"Construyendo grafo igraph con {len(edge_list):,} aristas ponderadas...")
+    g = ig.Graph(n=num_unique_nodes, edges=edge_list, directed=True, edge_attrs={'weight': weight_list})
+    logging.info(f"Grafo ponderado final creado con {g.vcount():,} nodos y {g.ecount():,} aristas.")
+    return g, id2idx, idx2id
 
-    def analyze_shortest_path_native(self, sample_size: int = 2000) -> Optional[float]:
-        if not self.graph: logging.error("El grafo no está construido."); return None
-        logging.info(f"Estimando longitud de camino promedio con muestra de {sample_size}...")
-        start_time = time.time()
-        
-        giant = self.graph.components(mode='weak').giant()
-        if giant.vcount() < 2: logging.warning("Componente gigante muy pequeño."); return None
-        if giant.vcount() < sample_size:
-            sample_size = giant.vcount()
-            logging.warning(f"Tamaño de la muestra reducido a {sample_size}.")
-
-        sampled_vertices_indices = np.random.choice(giant.vcount(), size=sample_size, replace=False)
-        total_path_lengths_sum, total_paths_count = 0.0, 0
-
-        logging.info("Iniciando bucle de cálculo de distancias ...")
-        for i, v_idx in enumerate(sampled_vertices_indices):
-            paths_from_v = giant.distances(source=v_idx)[0]
-            for p in paths_from_v:
-                if p != float('inf') and p > 0:
-                    total_path_lengths_sum += p
-                    total_paths_count += 1
-            if (i + 1) % 500 == 0:
-                logging.info(f"  ... procesados {i + 1}/{sample_size} nodos de muestra.")
-
-        if total_paths_count == 0: return float('inf')
-        average_path_length = total_path_lengths_sum / total_paths_count
-        elapsed = time.time() - start_time
-        logging.info(f"Estimación de camino promedio completada en {elapsed:.2f}s.")
-        logging.info(f"  - Longitud promedio estimada: {average_path_length:.4f}")
-        return average_path_length
-
-    def calculate_mst_on_distance_vectorized(self) -> Optional[Tuple[ig.Graph, float]]:
-        if not self.graph or "latitude" not in self.graph.vs.attributes():
-            logging.error("Grafo o atributos de ubicación no disponibles."); return None
-        
-        logging.info("Calculando MST...")
-        start_time = time.time()
-        
-        g_undirected = self.graph.as_undirected(mode='collapse')
-        giant = g_undirected.components(mode='weak').giant()
-        if giant.vcount() < 2: logging.warning("Componente gigante muy pequeño para calcular MST."); return None
-        
-        edges = np.array(giant.get_edgelist(), dtype=np.int32)
-        
-        lats = giant.vs["latitude"]
-        lons = giant.vs["longitude"]
-        coords = np.column_stack((lats, lons)).astype(np.float32)
-
-        lat1, lon1 = coords[edges[:, 0], 0], coords[edges[:, 0], 1]
-        lat2, lon2 = coords[edges[:, 1], 0], coords[edges[:, 1], 1]
-        weights = haversine_vectorized(lat1, lon1, lat2, lon2)
-        giant.es["weight"] = weights
-        mst = giant.spanning_tree(weights="weight", return_tree=True)
-        total_mst_length = sum(mst.es["weight"])
-
-        logging.info(f"Guardando grafo del MST en {MST_PKL_FILE}...")
-        mst.write_pickle(MST_PKL_FILE)
-        
-        elapsed = time.time() - start_time
-        logging.info(f"Cálculo de MST completado en {elapsed:.2f}s.")
-        logging.info(f"  - Longitud total del MST: {total_mst_length:,.2f} km")
-        return mst, total_mst_length
-
-    def save_data(self) -> None:
-        logging.info("Iniciando guardado de datos procesados...")
-        if self.graph:
-            logging.info(f"Guardando grafo principal en {GRAPH_PKL_FILE}...")
-            self.graph.write_pickle(GRAPH_PKL_FILE)
-        if self.id2idx and self.idx2id:
-            logging.info(f"Guardando mapeos de ID en {ID_MAP_PKL_FILE}...")
-            with open(ID_MAP_PKL_FILE, 'wb') as f: pickle.dump({'id2idx': self.id2idx, 'idx2id': self.idx2id}, f)
-        if self.locations is not None:
-             logging.info(f"Guardando array de ubicaciones en {LOCATIONS_NPY_FILE}...")
-             np.save(LOCATIONS_NPY_FILE, self.locations)
-        if self.communities:
-            logging.info(f"Guardando resultados de comunidades en {COMMUNITIES_PKL_FILE}...")
-            with open(COMMUNITIES_PKL_FILE, 'wb') as f: pickle.dump(self.communities, f)
-        logging.info("Todos los datos procesados han sido guardados.")
+def save_processed_data(g, id2idx, idx2id, locations_np):
+    logging.info("Iniciando el guardado de TODOS los datos procesados...")
+    if g: g.write_pickle(GRAPH_IGRAPH_FILE); logging.info(f"Grafo guardado.")
+    if id2idx:
+        with open(ID2IDX_PKL_FILE, 'wb') as f: pickle.dump(id2idx, f)
+        logging.info(f"Mapeo id->idx guardado.")
+    if idx2id:
+        with open(IDX2ID_PKL_FILE, 'wb') as f: pickle.dump(idx2id, f)
+        logging.info(f"Mapeo idx->id guardado.")
+    if locations_np is not None and id2idx:
+        locations_dict = {
+            user_id: tuple(locations_np[user_id - 1])
+            for user_id in id2idx.keys() if 1 <= user_id <= len(locations_np)
+        }
+        with open(LOCATIONS_PKL_FILE, 'wb') as f: pickle.dump(locations_dict, f)
+        logging.info(f"Diccionario de ubicaciones guardado.")
 
 if __name__ == "__main__":
-    if not all(os.path.exists(f) for f in [LOCATION_TXT_FILE, USER_TXT_FILE]):
-        logging.critical(f"Error: No se encontraron los archivos de entrada.")
+    logging.info("--- INICIANDO SCRIPT DE CONSTRUCCIÓN DE GRAFO PONDERADO ---")
+    locations_data = load_locations_numpy(LOCATION_TXT_FILE, NUM_USERS)
+    graph_igraph, id_to_idx, idx_to_id = build_weighted_graph(USER_TXT_FILE, locations_data)
+    if graph_igraph is not None:
+        save_processed_data(graph_igraph, id_to_idx, idx_to_id, locations_data)
+        logging.info("--- SCRIPT DE CONSTRUCCIÓN FINALIZADO EXITOSAMENTE ---")
     else:
-        processor = GraphProcessor(USER_TXT_FILE, LOCATION_TXT_FILE)
-        main_start_time = time.time()
-        
-        processor.run_build_pipeline()
-
-        if processor.graph:
-            processor.analyze_basic_metrics()
-            processor.analyze_degree_centrality(top_n=10)
-            processor.detect_communities(method='louvain')
-            processor.analyze_shortest_path_native(sample_size=2000)
-            processor.calculate_mst_on_distance_vectorized()
-            processor.save_data()
-            
-            total_time = time.time() - main_start_time
-            logging.info(f"--- ANÁLISIS COMPLETADO en {total_time/60:.2f} minutos ---")
-        else:
-            logging.critical("La construcción del grafo falló. El script terminará.")
+        logging.critical("No se pudo construir el grafo. Abortando.")
