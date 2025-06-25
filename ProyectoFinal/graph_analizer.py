@@ -8,6 +8,7 @@ import heapq
 import networkx as nx
 from collections import defaultdict
 import community_louvain as community
+import json
 
 USER_TXT_FILE = './dataset/1_million_user.txt'
 OUTPUT_DIR = './processed_data' 
@@ -115,6 +116,8 @@ def calculate_avg_shortest_path(g, sample_size):
     logging.info(f"Cálculo sobre muestra completado en {time.time() - start:.2f}s.")
     logging.info(f"Camino más corto promedio (estimado): {avg_path:.2f} km")
 
+total_communities = {}
+
 def analyze_communities(g):
     logging.info("--- 5. Detección de Comunidades (Algoritmo de Louvain) ---")
     start = time.time()
@@ -141,7 +144,7 @@ def analyze_communities(g):
     for nodo, id_comunidad in partition.items():
         comunidades.setdefault(id_comunidad, []).append(nodo)
     logging.info(f"Número de comunidades detectadas: {len(comunidades):,}")
-    
+    total_communities.update(comunidades)
     try:
         modularidad = community.modularity(partition, nx_g)
         logging.info(f"Modularidad del grafo: {modularidad:.4f}")
@@ -245,6 +248,20 @@ def get_users_followed_by(g, target_id, id2idx, idx2id):
     following_ids = [idx2id[idx] for idx in following_indices]
     return following_ids
 
+def export_stats_json(total_users, total_connections, total_communities, geo_coverage, output_path="stats.json"):
+    """
+    Exporta las estadísticas principales a un archivo JSON.
+    """
+    stats = {
+        "total_users": total_users,
+        "total_connections": total_connections,
+        "total_communities": total_communities,
+        "geo_coverage": geo_coverage
+    }
+    with open(output_path, "w", encoding="utf-8") as f:
+        json.dump(stats, f, ensure_ascii=False, indent=2)
+    logging.info(f"Archivo de estadísticas exportado a {output_path}")
+
 if __name__ == "__main__":
     logging.info("--- INICIANDO SCRIPT DE ANÁLISIS DE GRAFO ---")
     
@@ -259,7 +276,7 @@ if __name__ == "__main__":
         kruskal_mst_implementation(graph)
         prim_mst_implementation(graph)
         
-        target_user_id = 9998
+        target_user_id = 223
         followed_by_target = get_users_followed_by(graph, target_user_id, id2idx, idx2id)
         if followed_by_target:
             logging.info(f"El usuario con ID {target_user_id} sigue a {len(followed_by_target):,} usuarios.")
@@ -267,6 +284,20 @@ if __name__ == "__main__":
         else:
             logging.info(f"El usuario con ID {target_user_id} no existe o no sigue a ningún usuario.")
         
+        total_users = graph.vcount()
+        total_connections = graph.ecount()
+        g_undirected = graph.as_undirected(combine_edges='first')
+        wcc = g_undirected.components(mode='weak')
+        geo_coverage = "100%"
+
+        export_stats_json(
+            total_users=total_users,
+            total_connections=total_connections,
+            total_communities=len(total_communities),
+            geo_coverage=geo_coverage,
+            output_path="./visualizations/stats.json"
+        )
+
         logging.info("--- SCRIPT DE ANÁLISIS DE GRAFO FINALIZADO ---")
     else:
         logging.critical("No se pudieron cargar los datos necesarios. Abortando.")
